@@ -571,10 +571,8 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
               </p>
             ) : (
               pinComments.map((cmt) => {
-                const roleStr =
-                  cmt.author_role || cmt.sender_role || 'worker';
-                const nameStr =
-                  cmt.author_name || cmt.sender_name || 'Team Member';
+                const roleStr = cmt.sender_role || 'worker';
+                const nameStr = cmt.sender_name || 'Team Member';
                 const isMandorOrOwner =
                   roleStr === 'mandor' || roleStr === 'owner';
                 return (

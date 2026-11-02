@@ -9,11 +9,13 @@ export type MessageType = 'text' | 'voice_note' | 'system_event';
 
 export interface PinCommentRecord {
   id: string;
+  pin_id?: string;
   sender_name: string;
   sender_role: GlobalRole;
   note: string;
   media_url?: string | null;
   status_label?: string;
+  status_snapshot?: string;
   created_at: string;
 }
 

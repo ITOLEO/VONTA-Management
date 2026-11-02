@@ -153,6 +153,14 @@ export default function App() {
     setActiveWorkspaceTab(tab);
   };
 
+  const handleSelectProjectAndOpen = (
+    projId: string,
+    targetTab: WorkspaceTabId = 'overview'
+  ) => {
+    setActiveProjectId(projId);
+    handleNavigateTab(targetTab);
+  };
+
   // Close Avatar Popover when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -822,8 +830,8 @@ export default function App() {
         {
           id: `pinc-${Date.now()}`,
           pin_id: newPinId,
-          author_name: activeProfile.full_name,
-          author_role: activeProfile.global_role,
+          sender_name: activeProfile.full_name,
+          sender_role: activeProfile.global_role,
           note: `Open: ${payload.description}`,
           media_url: payload.beforeMediaUrl,
           created_at: new Date().toISOString(),
@@ -907,8 +915,8 @@ export default function App() {
                 {
                   id: `pinc-${Date.now()}`,
                   pin_id: pin.id,
-                  author_name: activeProfile.full_name,
-                  author_role: activeProfile.global_role,
+                  sender_name: activeProfile.full_name,
+                  sender_role: activeProfile.global_role,
                   note: 'Started work (Status: In progress).',
                   media_url: null,
                   created_at: new Date().toISOString(),
@@ -940,8 +948,8 @@ export default function App() {
                 {
                   id: `pinc-${Date.now()}`,
                   pin_id: pin.id,
-                  author_name: activeProfile.full_name,
-                  author_role: activeProfile.global_role,
+                  sender_name: activeProfile.full_name,
+                  sender_role: activeProfile.global_role,
                   note,
                   media_url: mediaUrl || null,
                   created_at: new Date().toISOString(),
@@ -1011,8 +1019,8 @@ export default function App() {
                 {
                   id: `pinc-${Date.now()}`,
                   pin_id: pin.id,
-                  author_name: activeProfile.full_name,
-                  author_role: activeProfile.global_role,
+                  sender_name: activeProfile.full_name,
+                  sender_role: activeProfile.global_role,
                   note:
                     workerCompletionNote ||
                     'Uploaded latest work photo (Status: Pending review).',
@@ -1147,8 +1155,8 @@ export default function App() {
                 {
                   id: `pinc-rev-${Date.now()}`,
                   pin_id: pin.id,
-                  author_name: activeProfile.full_name,
-                  author_role: activeProfile.global_role,
+                  sender_name: activeProfile.full_name,
+                  sender_role: activeProfile.global_role,
                   note: `[Revision R-0${nextRevisionCount}]: ${rejectReason}`,
                   media_url: item.after_media_url || null,
                   created_at: new Date().toISOString(),
@@ -2018,10 +2026,12 @@ export default function App() {
           inventoryItems={db.inventory_items}
           materialAllocations={db.material_allocations}
           activeProfile={activeProfile}
-          onSelectProjectAndOpenOverview={(projId) => {
-            setActiveProjectId(projId);
-            handleNavigateTab('overview');
-          }}
+          onSelectProjectAndOpenOverview={(projId) =>
+            handleSelectProjectAndOpen(projId, 'overview')
+          }
+          onSelectProjectAndOpenCanvas={(projId) =>
+            handleSelectProjectAndOpen(projId, 'spatial_map')
+          }
           onOpenNewProjectModal={() => setIsProjectManagerModalOpen(true)}
           onBackToWebHome={() => handleNavigateTab('web_home')}
           onSwitchProfile={handleSwitchProfile}
@@ -2684,10 +2694,12 @@ export default function App() {
                 materialAllocations={db.material_allocations}
                 activeProfile={activeProfile}
                 offlinePendingCount={offlinePendingQueueCount}
-                onSelectProjectAndOpenOverview={(projId) => {
-                  setActiveProjectId(projId);
-                  handleNavigateTab('overview');
-                }}
+                onSelectProjectAndOpenOverview={(projId) =>
+                  handleSelectProjectAndOpen(projId, 'overview')
+                }
+                onSelectProjectAndOpenCanvas={(projId) =>
+                  handleSelectProjectAndOpen(projId, 'spatial_map')
+                }
                 onOpenNewProjectModal={() => setIsProjectManagerModalOpen(true)}
                 onNavigateTab={(tab) => handleNavigateTab(tab)}
               />

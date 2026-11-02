@@ -1229,8 +1229,8 @@ export const INITIAL_VONTA_DATABASE: VontaDatabaseState = {
       pin_comments: [
         {
           id: 'cmt-503-1',
-          author_name: 'Surya Darma',
-          author_role: 'worker',
+          sender_name: 'Surya Darma',
+          sender_role: 'worker',
           note: 'Booster pump installed and ready for Foreman review.',
           media_url: createFieldPhotoSvgDataUri(
             '#503',
@@ -2099,8 +2099,8 @@ export function getDepartmentMeta(
   const found = divisions?.find((d) => d.code === deptCode);
   if (found) {
     return {
-      label: found.name || found.label,
-      shortLabel: found.short_label || found.name,
+      label: found.name || found.label || '',
+      shortLabel: found.short_label || found.name || '',
       code:
         found.short_code ||
         found.code.slice(0, 3).toUpperCase(),

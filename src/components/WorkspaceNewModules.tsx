@@ -2263,7 +2263,8 @@ export const DivisionHistoryView: React.FC<DivisionHistoryViewProps> = ({
     [approvedPinsAll, selectedDivCode]
   );
 
-  const getWorkerDisplay = (email: string) => {
+  const getWorkerDisplay = (email?: string | null) => {
+    if (!email) return 'Unassigned';
     const found = profiles.find((prof) => prof.email === email);
     return found ? `${found.full_name} (${found.email})` : email;
   };
