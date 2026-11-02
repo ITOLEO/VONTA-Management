@@ -677,4 +677,252 @@ graph TD
 
 ---
 
-**AUDIT COMPLETE — AWAITING USER APPROVAL PRIOR TO REMEDIATION.**
+## 8. Run 1 (Foundation) Remediation & Runtime Verification Report
+
+**Execution Phase:** Run 1 of 4 (Foundation)  
+**Execution Date:** November 2, 2026  
+**Status:** **ALL ITEMS COMPLETED & RUNTIME-VERIFIED** (0 Lint Errors, 0 Build Errors)  
+**Git Commits in Run 1:**
+1. `9a6b6da` - `fix(TS): fix 10 typescript compilation errors and harmonize pin comment fields`
+2. `97f16a5` - `fix(QA-003): route localStorage writes through safe storage helper and surface quota warning banner`
+3. `0351738` - `fix(QA-012): add referential cleanup, safe-delete guards, and owner restrictions for pin deletion and member removal`
+4. `dbaade0` - `chore(migration): implement schema v9 migration with v8 preservation, idempotent author mapping, and reset confirmation modal`
+5. `a5ea947` - `feat(SG-1): implement warehouse role and central can permission service`
+
+---
+
+### 8.1 Per-Item Status Summary
+
+| Item | Area | Status | Evidence / Verification Method | Git Commit |
+| :--- | :--- | :---: | :--- | :---: |
+| **Item 1** | TypeScript compilation fixes, PinComment sender harmonization (`sender_name`/`sender_role`), wire `onSelectProjectAndOpenOverview` & `onSelectProjectAndOpenCanvas` | **FIXED (runtime-verified)** | Playwright browser automation (`verify_step0.cjs` Test 1 & 2). 0 errors on `tsc --noEmit`. | `9a6b6da` |
+| **Item 2** | Centralized safe storage utility (`safeStorage.ts`), quota exceeded warning banner, backup protection | **FIXED (runtime-verified)** | Playwright browser automation (`verify_step0.cjs` Test 3). Quota banner triggers on throw and clears on write. | `97f16a5` |
+| **Item 3** | Referential cleanup cascades, safe pin delete guards (blocked if stock issued), member removal cascades & owner-only guards | **FIXED (runtime-verified)** | Playwright browser automation (`verify_step0.cjs` Test 4 & 5). Unassigns pins, resets status, logs activity stream. | `0351738` |
+| **Item 4** | Warehouse Keeper role (`warehouse`), central RBAC `can(role, action)`, tab guards, read-only spatial map, UI display labels | **FIXED (runtime-verified)** | Playwright browser automation (`verify_item4.cjs` Tests 1–4). Role display, tab redirect, read-only enforcement. | `a5ea947` |
+| **Item 5** | Schema v9 migration, v8 backup preservation, reset confirmation modal, idempotent author mapping | **FIXED (runtime-verified)** | Playwright browser automation (`verify_step0.cjs` Test 6 & 7). V8 backup preserved, v9 migration idempotent. | `dbaade0` |
+
+---
+
+### 8.2 Step 0 Runtime Verification (Items 1, 2, 3, 5)
+
+Step 0 test suite was executed via Playwright in Microsoft Edge against the live dev server (`http://localhost:3000/`). All 7 tests passed with detailed runtime assertions:
+
+```
+[TEST 1] Pin comment sender fields: PASS (sender_name="Agus Foreman", sender_role="Supervisor", new comment added with sender_name="David Warehouse")
+[TEST 2] Project navigation buttons: PASS (onSelectProjectAndOpenOverview opened overview for Villa Uluwatu, onSelectProjectAndOpenCanvas opened spatial_map with Blueprint bp-uluwatu-01)
+[TEST 3] Storage quota banner: PASS (Quota banner appeared when localStorage.setItem threw, disappeared after successful write)
+[TEST 4] Pin deletion safe guards: PASS (Blocked pin-101 with issued materials, allowed pin-102 unissued, Activity Log entry written, pin history retained)
+[TEST 5] Member removal cascades: PASS (Self-block verified, last-owner block verified, worker Ketut removed, 1 pin unassigned & status reset to open, 2 activity logs written)
+[TEST 6] Reset-to-seed modal: PASS (Mandor cannot see reset button, Owner opens modal, Cancel leaves DB intact, Confirm resets to v9 seed)
+[TEST 7] Migration & Idempotency: PASS (Loaded pre-v9 payload with author_name/author_role, migrated to sender_*, preserved v8 backup, reload idempotent)
+```
+
+---
+
+### 8.3 Core System Questions & Findings
+
+#### 1. Is there any UI to cancel or return an issued allocation?
+**Explicit Answer:** **NO.** There is currently no UI or handler in VONTA to cancel or return an issued allocation (`allocated_from_stock`). Consequently, once a pin has materials issued from stock, the pin-delete block is a **known dead end until Run 2 introduces reverse material allocations / return workflows**.
+
+#### 2. When resetting `in_preview` pins on member removal, are after-proof/media and comments preserved and visible in history?
+**Explicit Answer:** **YES.** In `src/App.tsx:842-856`, when an assigned worker is removed from the project, any pin assigned to that worker that is `in_progress` or `in_preview` undergoes the following transformation:
+- `assigned_worker_email`: set to `null`
+- `status`: reset to `'open'`
+- `before_media_url`, `after_media_url`, `media_records`, and `pin_comments` are **100% preserved**. They remain intact on the pin record and are fully visible in the pin details panel and historical activity stream.
+
+#### 3. If the corrupt-payload backup write fails, what happens?
+**Explicit Answer:** In `src/utils/migration.ts:167-184`, if backing up a corrupt payload fails (e.g., storage quota exceeded or storage disabled):
+- `backupCorruptPayload` returns `{ success: false }`.
+- `loadAndMigrateDatabase` sets `shouldSkipAutoPersist: true`.
+- In `src/App.tsx`, `skipAutoPersist` prevents the auto-save `useEffect` from writing to `localStorage`.
+- The application boots into a pristine v9 seed **in-memory only**, without overwriting the corrupt data in `localStorage` until the user explicitly triggers a reset or manual save.
+
+#### 4. Do attendance dashboard metrics change due to the new warehouse member?
+**Explicit Answer:** **NO.** Attendance dashboard metrics in both `src/components/WorkspaceNewModules.tsx:1413` and `src/components/MinimalistDashboardViews.tsx:457, 878, 1198` strictly filter by `profile.global_role === 'worker'`.
+- **Before adding warehouse keeper:** Uluwatu Project had 4 assigned workers (Made, Budi, Ketut, Wayan); 4 of 4 present (100%), 0 absent.
+- **After adding warehouse keeper (David):** David has `global_role === 'warehouse'`. He is excluded from worker attendance calculations. Uluwatu attendance metrics remain exactly **4 of 4 present (100%), 0 absent**.
+
+#### 5. Package Files Verification
+`package.json` and `package-lock.json` are completely untouched (**0 diff**). No new npm dependencies were introduced.
+
+---
+
+### 8.4 Role Source Resolution & Seed Analysis
+
+#### Role Source Rule
+Inside any active project, the acting role is derived strictly from the active project membership:
+```typescript
+const activeProjectMembership = useMemo(() => {
+  if (!activeProject || !activeProfile) return null;
+  return db.project_members.find(
+    (pm) => pm.project_id === activeProject.id && pm.user_email === activeProfile.email
+  ) || null;
+}, [db.project_members, activeProject, activeProfile]);
+
+const activeRole = useMemo<GlobalRole | null>(() => {
+  if (activeProject) {
+    return activeProjectMembership?.role || null; // DENY / Read-only if no membership
+  }
+  return activeProfile?.global_role || null; // Global screens only
+}, [activeProject, activeProjectMembership, activeProfile]);
+```
+
+#### Seed Member Project Role vs Global Role & Behavioral Impact
+
+| Profile | Global Role | Assigned Projects | Project Role | Behavior in Unassigned Projects |
+| :--- | :--- | :--- | :--- | :--- |
+| **Bambang Owner** | `owner` | Villa Uluwatu, Villa Cempaka | `owner` | Owner on both projects; full access. |
+| **Agus Foreman** | `mandor` | Villa Uluwatu (`proj-uluwatu-01`) | `mandor` | **Villa Cempaka:** `activeRole = null` (Guest / Read-only). Cannot create pins, approve tasks, or manage attendance. |
+| **Made Worker** | `worker` | Villa Uluwatu (`proj-uluwatu-01`) | `worker` | **Villa Cempaka:** `activeRole = null` (Guest / Read-only). Cannot take tasks or upload proof. |
+| **Budi Worker** | `worker` | Villa Uluwatu (`proj-uluwatu-01`) | `worker` | **Villa Cempaka:** `activeRole = null` (Guest / Read-only). |
+| **Ketut Worker** | `worker` | Villa Uluwatu (`proj-uluwatu-01`) | `worker` | **Villa Cempaka:** `activeRole = null` (Guest / Read-only). |
+| **Wayan Worker** | `worker` | Villa Uluwatu (`proj-uluwatu-01`) | `worker` | **Villa Cempaka:** `activeRole = null` (Guest / Read-only). |
+| **David Warehouse** | `warehouse` | Villa Uluwatu (`proj-uluwatu-01`) | `warehouse` | **Villa Cempaka:** `activeRole = null` (Guest / Read-only). In Uluwatu: sees inventory/shopping, read-only on spatial map. |
+
+*Behavioral Change:* Under the legacy system, a user with `global_role === 'mandor'` could perform foreman actions on any project because checks only inspected `activeProfile.global_role`. Under the new source, if a user is not an explicit member of the active project, `activeRole` is `null`, blocking all mutating actions across that project.
+
+---
+
+### 8.5 Complete Action Map Table (`handler > action > roles`)
+
+Every state-mutating handler in `src/App.tsx` and child components is mapped to a pure `Action` validated through `can(activeRole, action)`.
+
+| Handler in `src/App.tsx` | Mapped `Action` | Allowed Roles | UI Before | Handler Before | After Behavior |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `handleConfirmCreatePin` | `create_task` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** (Worker could bypass) | **BLOCKED** via `can(activeRole, 'create_task')` |
+| `handleStartPinProgress` | `start_progress` | `worker` | Worker-only button | **UNGUARDED** | **GUARDED** for assigned worker |
+| `handleWorkerUploadProof` | `upload_after_proof` | `worker` | Worker-only modal | **UNGUARDED** | **GUARDED** via `can(activeRole, 'upload_after_proof')` |
+| `handleWorkerUploadBeforeProof` | `upload_before_proof` | `worker` | Worker-only button | **UNGUARDED** | **GUARDED** via `can(activeRole, 'upload_before_proof')` |
+| `handleLeaderApprovePin` | `approve_task` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleLeaderRejectPin` | `reject_task` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleLeaderRequestRevision` | `request_revision` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleLeaderDeletePin` | `delete_task` | `owner`, `mandor` | Hidden for workers | Guarded in Item 3 | Guarded + stock issue check |
+| `handleUpdatePinPosition` | `reposition_task` | `owner`, `mandor` | Visual drag only | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleLeaderUpdatePinMeta` | `edit_task_details` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleLeaderAssignWorker` | `assign_worker` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleAddPinComment` | `add_comment` | `owner`, `mandor`, `worker` | Visible to all | **UNGUARDED** | **BLOCKED** for warehouse (read-only) |
+| `handleUpdateInventoryItem` | `edit_inventory_item` | `owner`, `mandor`, `warehouse` | Visible to all | **UNGUARDED** | **BLOCKED** for workers |
+| `handleQuickRestock` | `restock_inventory` | `owner`, `mandor`, `warehouse` | Visible to all | **UNGUARDED** | **BLOCKED** for workers |
+| `handleCreateInventoryItem` | `create_inventory_item` | `owner`, `mandor`, `warehouse` | Visible to all | **UNGUARDED** | **BLOCKED** for workers |
+| `handleMarkShoppingItemBought` | `mark_shopping_bought` | `owner`, `mandor`, `warehouse` | Visible to all | **UNGUARDED** | **BLOCKED** for workers |
+| `handleSubmitMarketlistBatch` | `create_store_request` | `owner`, `mandor`, `worker` | Visible to all | **UNGUARDED** | Preserves existing behavior (QA-001 deferred) |
+| `handleWorkerSubmitAttendance` | `submit_self_attendance` | `worker` | Worker self-scan | **UNGUARDED** | **BLOCKED** for non-workers |
+| `handleManualAttendanceSubmit` | `log_manual_attendance` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleRemoveProjectMember` | `remove_project_member` | `owner` | Owner UI only | Guarded in Item 3 | Owner-only enforced |
+| `handleUpdateProjectMemberRole`| `update_member_role` | `owner` | Owner UI only | **UNGUARDED** | Owner-only enforced |
+| `handleInviteNewMember` | `invite_member` | `owner` | Owner UI only | **UNGUARDED** | Owner-only enforced |
+| `handleSaveProjectSettings` | `edit_project_settings` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleCreateNewProject` | `create_project` | `owner` | Owner UI only | **UNGUARDED** | Owner-only enforced |
+| `handleCreateBlueprint` | `create_blueprint` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleTriggerAiAnalysis` | `run_ai_analysis` | `owner`, `mandor` | Hidden for workers | **UNGUARDED** | **BLOCKED** for workers/warehouse |
+| `handleSendChatMessage` | `send_chat_message` | `owner`, `mandor`, `worker` | Visible to all | `activeProfile.global_role !== 'worker'` | Uses `can(activeRole, 'send_chat_message')` |
+| `handleNavigateTab` | `view_tab_<id>` | Per Tab RBAC | Unrestricted | **UNGUARDED** | Refuses unauthorized tabs, safe fallback |
+
+---
+
+### 8.6 Tab Navigation RBAC Guard Table
+
+`handleNavigateTab` evaluates `can(activeRole, tabActionMap[tab])`. If denied, it displays a warning toast and falls back to `DEFAULT_TAB_BY_ROLE[activeRole]`.
+
+| Workspace Tab ID | Action | Allowed Roles | Default for Role | Warehouse Access |
+| :--- | :--- | :--- | :--- | :---: |
+| `web_home` | `view_tab_web_home` | All (Global) | - | Allowed |
+| `dashboard_projects` | `view_tab_dashboard_projects`| `owner`, `mandor` | - | **DENIED** |
+| `home` | `view_tab_home` | `owner`, `mandor` | - | **DENIED** |
+| `overview` | `view_tab_overview` | `owner`, `mandor`, `worker`, `warehouse` | `owner`, `mandor` | Allowed |
+| `spatial_map` | `view_tab_spatial_map` | `owner`, `mandor`, `worker`, `warehouse` | `worker` | Allowed (Read-only) |
+| `history` | `view_tab_history` | `owner`, `mandor`, `worker`, `warehouse` | - | Allowed |
+| `attendance` | `view_tab_attendance` | `owner`, `mandor`, `worker`, `warehouse` | - | Allowed |
+| `inventory` | `view_tab_inventory` | `owner`, `mandor`, `warehouse` | `warehouse` | Allowed |
+| `shopping` | `view_tab_shopping` | `owner`, `mandor`, `warehouse` | - | Allowed |
+| `sr_pr` | `view_tab_sr_pr` | `owner`, `mandor`, `worker`, `warehouse` | - | Allowed |
+| `team` | `view_tab_team` | `owner` | - | **DENIED (Redirects)** |
+| `project_settings` | `view_tab_project_settings` | `owner`, `mandor` | - | **DENIED (Redirects)** |
+
+---
+
+### 8.7 Direct Role Comparison Audit Outside `permissions.ts`
+
+An exhaustive scan across all `.ts` and `.tsx` source files in `src/` identified **24 hits**. Each hit was audited and verified to ensure no unauthorized permission logic exists outside `permissions.ts`:
+
+| File & Line | Code Snippet | Purpose / Justification |
+| :--- | :--- | :--- |
+| `src/App.tsx:679` | `p.global_role === 'worker'` | UI roster filter for worker task assignment dropdown. |
+| `src/App.tsx:692` | `payload.role === 'worker'` | Form state assignment: sets trade department if role is worker. |
+| `src/App.tsx:831` | `pm.role === 'owner'` | Project integrity guard: prevents removing the last owner of a project. |
+| `src/App.tsx:2256` | `p.global_role === 'worker'` | Roster filter for worker quick-assign list. |
+| `src/components/CustomPrintBastModal.tsx:87, 88, 104, 113, 256, 259, 275, 277, 291, 292, 302, 303` | `party === 'mandor' \| 'worker'` | BAST Handover Document signature canvas pad selector. Document rendering only. |
+| `src/components/ExecutiveAndPortfolioView.tsx:48` | `p.global_role === 'worker'` | Worker count metric calculation for executive view. |
+| `src/components/MinimalistDashboardViews.tsx:457` | `p.global_role === 'worker'` | Roster list display filter in Project Overview. |
+| `src/components/MinimalistDashboardViews.tsx:878` | `p.global_role === 'worker'` | Worker metric counter in Project Cards. |
+| `src/components/MinimalistDashboardViews.tsx:1198`| `p.global_role === 'worker'` | Worker metric counter in Project Overview. |
+| `src/components/ModalsTahap1.tsx:72, 215` | `role === 'worker'` | Conditional form field display in Invite Member modal (trade department). |
+| `src/components/WorkspaceNewModules.tsx:1413` | `p.global_role === 'worker'` | Attendance list filter for displaying worker roster. |
+| `src/utils/migration.test.ts:61` | `cmt?.sender_role === 'mandor'` | Unit test assertion verifying author_role mapped to sender_role. |
+
+**Result:** **0 unauthorized permission or access control checks outside `permissions.ts`.** All access decisions are strictly delegated to `can()`.
+
+---
+
+### 8.8 Playwright Automated Browser Test Evidence (Item 4)
+
+Browser verification suite (`verify_item4.cjs`) was executed using Microsoft Edge against `http://localhost:3000/`. All 4 suites passed:
+
+```
+=== ITEM 4 RUNTIME VERIFICATION SUITE ===
+
+[ITEM 4 - TEST 1] Profile switcher includes Warehouse Keeper:
+- Switched profile to Warehouse Keeper (David)
+- Active role badge: "WAREHOUSE KEEPER"
+- Result: PASS
+
+[ITEM 4 - TEST 2] Tab guard enforcement for Warehouse Keeper:
+- Attempted navigation to "team" tab:
+  -> Toast message: "Access restricted: Your role does not have permission to access team."
+  -> Active tab redirected safely to: "inventory"
+- Attempted navigation to "project_settings" tab:
+  -> Toast message: "Access restricted: Your role does not have permission to access project_settings."
+  -> Active tab redirected safely to: "inventory"
+- Result: PASS
+
+[ITEM 4 - TEST 3] Warehouse Keeper spatial map read-only:
+- Navigated to "spatial_map" tab
+- Placement toggle button disabled/hidden: PASS
+- Clicked Pin pin-101 to open task details panel
+- Read-only banner displayed: "Task details are in read-only mode for your role."
+- Comment input disabled: PASS (Placeholder: "Comments are disabled for your role.")
+- Post comment button disabled: PASS
+- Footer read-only notice: "Read-only mode: Warehouse Keeper role cannot modify task status."
+- Result: PASS
+
+[ITEM 4 - TEST 4] Invite member modal role options:
+- Switched profile back to Owner (Bambang)
+- Opened Invite Member modal
+- Role dropdown options: ["owner", "mandor", "worker", "warehouse"]
+- Result: PASS
+
+=== ALL ITEM 4 TESTS PASSED SUCCESSFULLY ===
+```
+
+---
+
+### 8.9 Code Quality & Validation Results
+
+- **TypeScript Typecheck (`npm run lint` / `tsc --noEmit`):**
+  - **Result:** **0 errors.**
+- **Production Build (`npm run build`):**
+  - **Result:** **PASS (built in 1.39s).**
+  - Artifacts generated in `dist/` (`dist/index.html`, `dist/assets/index-*.css`, `dist/assets/index-*.js`).
+- **Dependencies & Lockfile:**
+  - `package.json`: 0 modifications.
+  - `package-lock.json`: 0 modifications.
+
+---
+
+### 8.10 Remaining Limitations & Run 2 Priorities
+
+1. **Client-Side Profile Switcher:** The profile switcher in the user avatar dropdown is a demonstration tool for local manual and automated QA. It operates without cryptographic authentication or backend sessions.
+2. **QA-001 Store Request Immediate Stock Deduction (Deferred to Run 2):** In accordance with project instructions, `handleSubmitMarketlistBatch` continues to decrement `stock_available` immediately upon submission. Run 2 must refactor this into a multi-stage approval lifecycle (`Draft` -> `Submitted` -> `Approved` -> `Fulfilled`) where stock is decremented ONLY upon fulfillment by a Warehouse Keeper.
+3. **Goods Receipt Workflow (Run 2):** Introduction of the `GoodsReceiptRecord` model and UI for Warehouse Keepers to receive shipments against Purchase Requests, incrementing stock and appending to the Stock Movement Ledger.
+4. **Attendance Duplication & Manual Correction (Run 2):** Implement single check-in/out per user per day validation and manual correction with reason and audit trail.
+5. **Pin Deletion Reverse Allocation (Run 2):** Introduce a return/cancel workflow for issued materials so pins with issued stock can have materials returned to inventory, unblocking pin deletion.
