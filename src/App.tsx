@@ -745,20 +745,97 @@ export default function App() {
   };
 
   const handleRemoveMember = (profileId: string) => {
+    // 1. Owner-only permission check
+    if (activeProfile.global_role !== 'owner') {
+      showToast('Permission denied: Only Owner can remove team members.');
+      return;
+    }
+
     const target = db.profiles.find((p) => p.id === profileId);
-    if (!target || target.id === 'prof-owner-01') return;
+    if (!target) return;
+
+    // 2. Block removing yourself
+    if (target.id === activeProfile.id || target.email.toLowerCase() === activeProfile.email.toLowerCase()) {
+      showToast('Action blocked: You cannot remove yourself from the project.');
+      return;
+    }
+
+    // 3. Block removing the last owner of this project
+    const currentProjectOwners = db.project_members.filter(
+      (pm) => pm.project_id === activeProject.id && pm.role === 'owner'
+    );
+    const isTargetAnOwner = currentProjectOwners.some(
+      (pm) => pm.user_email.toLowerCase() === target.email.toLowerCase()
+    );
+    if (isTargetAnOwner && currentProjectOwners.length <= 1) {
+      showToast('Action blocked: Cannot remove the last Owner from the project.');
+      return;
+    }
+
+    // 4. Find all active pins in this project assigned to this member
+    const assignedPins = db.pins.filter(
+      (p) =>
+        p.project_id === activeProject.id &&
+        (p.assigned_worker_email || '').toLowerCase() === target.email.toLowerCase()
+    );
+
+    const unassignedLogs: ActivityStreamRecord[] = [];
+    assignedPins.forEach((pin) => {
+      const willResetStatus =
+        pin.status === 'in_progress' || pin.status === 'in_preview';
+      const statusNote = willResetStatus
+        ? ` Status reset from ${pin.status} to Open.`
+        : '';
+      unassignedLogs.push(
+        createActivityRecord({
+          blueprintId: pin.blueprint_id,
+          pinId: pin.id,
+          department: pin.department,
+          messageType: 'system_event',
+          content: `Unassigned worker ${target.full_name} (${target.email}) from pin ${pin.pin_code}.${statusNote}`,
+        })
+      );
+    });
+
+    const removalLog = createActivityRecord({
+      blueprintId: null,
+      pinId: null,
+      department: null,
+      messageType: 'system_event',
+      content: `Owner removed team member ${target.full_name} (${target.email}) from project ${activeProject.name}.`,
+    });
 
     setDb((prev) => ({
       ...prev,
-      profiles: prev.profiles.filter((p) => p.id !== profileId),
+      // Retain global profile in db.profiles; only remove project membership
       project_members: prev.project_members.filter(
-        (pm) => pm.user_email !== target.email
+        (pm) =>
+          !(
+            pm.project_id === activeProject.id &&
+            pm.user_email.toLowerCase() === target.email.toLowerCase()
+          )
       ),
+      // Unassign pins in this project and reset status if dependent on worker
+      pins: prev.pins.map((pin) => {
+        if (
+          pin.project_id === activeProject.id &&
+          (pin.assigned_worker_email || '').toLowerCase() ===
+            target.email.toLowerCase()
+        ) {
+          const resetStatus =
+            pin.status === 'in_progress' || pin.status === 'in_preview'
+              ? 'open'
+              : pin.status;
+          return {
+            ...pin,
+            assigned_worker_email: null,
+            status: resetStatus,
+          };
+        }
+        return pin;
+      }),
+      activity_streams: [removalLog, ...unassignedLogs, ...prev.activity_streams],
     }));
-
-    if (activeProfileId === profileId) {
-      setActiveProfileId('prof-owner-01');
-    }
 
     showToast(`Team member ${target.full_name} removed from project.`);
   };
@@ -1273,6 +1350,24 @@ export default function App() {
     pin: PinRecord,
     ownerDecisionNote?: string
   ) => {
+    // 1. Owner-only check
+    if (activeProfile.global_role !== 'owner') {
+      showToast('Permission denied: Only Owner can delete pins.');
+      return;
+    }
+
+    // 2. Block deletion if materials have already been issued from stock
+    const issuedAllocations = db.material_allocations.filter(
+      (m) =>
+        m.pin_id === pin.id && m.allocation_status === 'allocated_from_stock'
+    );
+    if (issuedAllocations.length > 0) {
+      showToast(
+        `Cannot delete pin ${pin.pin_code}: ${issuedAllocations.length} material(s) have already been issued from stock. Cancel or return allocations first.`
+      );
+      return;
+    }
+
     trackOfflineActionIfActive();
     const noteSuffix = ownerDecisionNote
       ? ` Note: "${ownerDecisionNote}"`
@@ -1289,6 +1384,10 @@ export default function App() {
     setDb((prev) => ({
       ...prev,
       pins: prev.pins.filter((item) => item.id !== pin.id),
+      // Clean up unissued child material allocations
+      material_allocations: prev.material_allocations.filter(
+        (item) => item.pin_id !== pin.id
+      ),
       activity_streams: [sysLog, ...prev.activity_streams],
     }));
 
