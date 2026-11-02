@@ -92,6 +92,7 @@ export function migrateDatabaseState(raw: any): VontaDatabaseState {
 export interface InitialLoadResult {
   state: VontaDatabaseState;
   storageWarning: boolean;
+  shouldSkipAutoPersist: boolean;
 }
 
 /**
@@ -99,6 +100,7 @@ export interface InitialLoadResult {
  * 1. Checks v9 key first. If present and valid, migrates idempotently.
  * 2. If v9 absent, checks v8 key. If present and valid, migrates and writes to v9, leaving v8 untouched.
  * 3. If parsing fails, backs up corrupt string to BACKUP_CORRUPT_KEY and runs on seed data in memory.
+ *    If backup write fails, shouldSkipAutoPersist is set so seed is NOT written until user chooses.
  * 4. If neither exists, seeds and writes to v9.
  */
 export function loadInitialDatabase(): InitialLoadResult {
@@ -108,11 +110,15 @@ export function loadInitialDatabase(): InitialLoadResult {
     try {
       const parsed = JSON.parse(v9Raw);
       const migrated = migrateDatabaseState(parsed);
-      return { state: migrated, storageWarning: false };
+      return { state: migrated, storageWarning: false, shouldSkipAutoPersist: false };
     } catch (err) {
       console.error('[VONTA Migration] Failed to parse v9 data; creating backup before fallback:', err);
-      safeSetItem(BACKUP_CORRUPT_KEY, v9Raw);
-      return { state: migrateDatabaseState(INITIAL_VONTA_DATABASE), storageWarning: false };
+      const backupRes = safeSetItem(BACKUP_CORRUPT_KEY, v9Raw);
+      return {
+        state: migrateDatabaseState(INITIAL_VONTA_DATABASE),
+        storageWarning: !backupRes.success,
+        shouldSkipAutoPersist: !backupRes.success,
+      };
     }
   }
 
@@ -127,11 +133,16 @@ export function loadInitialDatabase(): InitialLoadResult {
       return {
         state: migrated,
         storageWarning: !writeRes.success,
+        shouldSkipAutoPersist: false,
       };
     } catch (err) {
       console.error('[VONTA Migration] Failed to parse v8 data; creating backup before fallback:', err);
-      safeSetItem(BACKUP_CORRUPT_KEY, v8Raw);
-      return { state: migrateDatabaseState(INITIAL_VONTA_DATABASE), storageWarning: false };
+      const backupRes = safeSetItem(BACKUP_CORRUPT_KEY, v8Raw);
+      return {
+        state: migrateDatabaseState(INITIAL_VONTA_DATABASE),
+        storageWarning: !backupRes.success,
+        shouldSkipAutoPersist: !backupRes.success,
+      };
     }
   }
 
@@ -141,5 +152,6 @@ export function loadInitialDatabase(): InitialLoadResult {
   return {
     state: seeded,
     storageWarning: !writeRes.success,
+    shouldSkipAutoPersist: false,
   };
 }

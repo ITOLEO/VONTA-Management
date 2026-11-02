@@ -12,6 +12,7 @@ import {
   SpecialtyDepartment,
 } from '../types/schema';
 import { getDepartmentMeta, PIN_STATUS_META } from '../data/initialDatabase';
+import { can, ROLE_DISPLAY_LABELS } from '../utils/permissions';
 import {
   Search,
   Plus,
@@ -130,9 +131,7 @@ export const VontaWebHomeLandingView: React.FC<VontaWebHomeLandingViewProps> = (
                       {activeProfile.full_name}
                     </p>
                     <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 rounded bg-[#1B365D]/10 dark:bg-white/10 text-[#1B365D] dark:text-[#D97706]">
-                      {activeProfile.global_role === 'mandor'
-                        ? 'foreman'
-                        : activeProfile.global_role}
+                      {ROLE_DISPLAY_LABELS[activeProfile.global_role]}
                     </span>
                   </div>
                   <p className="font-mono text-[11px] text-[#475569] dark:text-[#94A3B8] truncate mt-0.5">
@@ -146,8 +145,7 @@ export const VontaWebHomeLandingView: React.FC<VontaWebHomeLandingViewProps> = (
                   </span>
                   {profiles
                     .filter(
-                      (p) =>
-                        p.global_role === 'owner' || p.global_role === 'mandor'
+                      (p) => can(p.global_role, 'create_task')
                     )
                     .slice(0, 3)
                     .map((prof) => {
@@ -168,10 +166,7 @@ export const VontaWebHomeLandingView: React.FC<VontaWebHomeLandingViewProps> = (
                         >
                           <span className="truncate">
                             {prof.full_name} (
-                            {(prof.global_role === 'mandor'
-                              ? 'foreman'
-                              : prof.global_role
-                            ).toUpperCase()}
+                            {ROLE_DISPLAY_LABELS[prof.global_role].toUpperCase()}
                             )
                           </span>
                           {isCurrent && (
@@ -1547,6 +1542,7 @@ export const ProjectOverviewDashboard: React.FC<
 interface TeamManagementViewProps {
   profiles: ProfileRecord[];
   projectMembers: ProjectMemberRecord[];
+  activeRole?: GlobalRole | null;
   activeProfile: ProfileRecord;
   pins: PinRecord[];
   divisions?: DivisionRecord[];
@@ -1567,6 +1563,7 @@ interface TeamManagementViewProps {
 export const TeamManagementView: React.FC<TeamManagementViewProps> = ({
   profiles,
   projectMembers,
+  activeRole,
   activeProfile,
   pins,
   divisions,
@@ -1583,9 +1580,10 @@ export const TeamManagementView: React.FC<TeamManagementViewProps> = ({
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [roleFilter, setRoleFilter] = useState<string>('all');
 
-  const canManageTeam =
-    activeProfile.global_role === 'owner' ||
-    activeProfile.global_role === 'mandor';
+  const canManageTeam = can(
+    activeRole !== undefined ? activeRole : activeProfile.global_role,
+    'update_member_role'
+  );
 
   const divisionOptions = useMemo(() => {
     if (divisions && divisions.length > 0) {
@@ -1733,9 +1731,7 @@ export const TeamManagementView: React.FC<TeamManagementViewProps> = ({
             <tbody className="divide-y divide-[#E2E6EC] dark:divide-[#263346] text-[13px]">
               {filteredMembers.map((member) => {
                 const isSelf = member.id === activeProfile.id;
-                const isLeaderRole =
-                  member.global_role === 'owner' ||
-                  member.global_role === 'mandor';
+                const isLeaderRole = can(member.global_role, 'create_task');
                 const pmRecord = projectMembers.find(
                   (pm) => pm.user_email === member.email
                 );
@@ -1821,14 +1817,12 @@ export const TeamManagementView: React.FC<TeamManagementViewProps> = ({
                         >
                           <option value="owner">Owner</option>
                           <option value="mandor">Foreman</option>
+                          <option value="warehouse">Warehouse Keeper</option>
                           <option value="worker">Worker</option>
                         </select>
                       ) : (
                         <span>
-                          {(member.global_role === 'mandor'
-                            ? 'foreman'
-                            : member.global_role
-                          ).toUpperCase()}
+                          {ROLE_DISPLAY_LABELS[member.global_role].toUpperCase()}
                         </span>
                       )}
                     </td>

@@ -73,22 +73,15 @@ import {
   loadInitialDatabase,
   migrateDatabaseState,
 } from './utils/migration';
+import {
+  can,
+  Action,
+  ROLE_DISPLAY_LABELS,
+  DEFAULT_TAB_BY_ROLE,
+  WorkspaceTabId,
+} from './utils/permissions';
 
 const STORAGE_KEY = STORAGE_KEY_V9;
-
-type WorkspaceTabId =
-  | 'web_home'
-  | 'dashboard_projects'
-  | 'home'
-  | 'overview'
-  | 'spatial_map'
-  | 'history'
-  | 'attendance'
-  | 'inventory'
-  | 'shopping'
-  | 'sr_pr'
-  | 'team'
-  | 'project_settings';
 
 export default function App() {
   // 1. Database State & Safe Schema Version 9 Migration
@@ -97,17 +90,21 @@ export default function App() {
   const [storageQuotaWarning, setStorageQuotaWarning] = useState<boolean>(
     initialDbLoad.storageWarning
   );
+  const [skipAutoPersist, setSkipAutoPersist] = useState<boolean>(
+    initialDbLoad.shouldSkipAutoPersist
+  );
   const [isResetConfirmModalOpen, setIsResetConfirmModalOpen] =
     useState<boolean>(false);
 
   useEffect(() => {
+    if (skipAutoPersist) return;
     const res = safeSetItem(STORAGE_KEY_V9, JSON.stringify(db));
     if (!res.success) {
       setStorageQuotaWarning(true);
     } else {
       setStorageQuotaWarning(false);
     }
-  }, [db]);
+  }, [db, skipAutoPersist]);
 
   // 2. Active User Profile & Active Project
   const [activeProfileId, setActiveProfileId] =
@@ -138,6 +135,29 @@ export default function App() {
       return 'web_home';
     }
   );
+
+  // Effective role resolution: inside a project, use the active project membership role.
+  // If the user has NO membership in the active project, DENY (null, read-only at most);
+  // fallback to activeProfile.global_role only on global screens (web_home, dashboard_projects).
+  const isGlobalScreen =
+    activeWorkspaceTab === 'web_home' ||
+    activeWorkspaceTab === 'dashboard_projects';
+
+  const activeProjectMembership = useMemo(() => {
+    return (db.project_members || []).find(
+      (pm) =>
+        pm.project_id === activeProject.id &&
+        pm.user_email === activeProfile.email
+    );
+  }, [db.project_members, activeProject.id, activeProfile.email]);
+
+  const activeRole: GlobalRole | null = useMemo(() => {
+    if (isGlobalScreen) {
+      return activeProfile.global_role;
+    }
+    return activeProjectMembership ? activeProjectMembership.role : null;
+  }, [isGlobalScreen, activeProfile.global_role, activeProjectMembership]);
+
   const [lastNonSettingsTab, setLastNonSettingsTab] =
     useState<WorkspaceTabId>('overview');
   const [isSidebarHovered, setIsSidebarHovered] = useState<boolean>(false);
@@ -147,6 +167,37 @@ export default function App() {
   const [quickPinSearch, setQuickPinSearch] = useState<string>('');
 
   const handleNavigateTab = (tab: WorkspaceTabId) => {
+    const tabActionMap: Record<WorkspaceTabId, Action> = {
+      web_home: 'view_tab_overview',
+      dashboard_projects: 'view_tab_overview',
+      home: 'view_tab_overview',
+      overview: 'view_tab_overview',
+      spatial_map: 'view_tab_spatial_map',
+      history: 'view_tab_history',
+      attendance: 'view_tab_attendance',
+      inventory: 'view_tab_inventory',
+      shopping: 'view_tab_shopping',
+      sr_pr: 'view_tab_sr_pr',
+      team: 'view_tab_team',
+      project_settings: 'view_tab_project_settings',
+    };
+
+    const requiredAction = tabActionMap[tab];
+    if (requiredAction && !can(activeRole, requiredAction)) {
+      const fallbackTab: WorkspaceTabId = activeRole
+        ? DEFAULT_TAB_BY_ROLE[activeRole]
+        : 'overview';
+      showToast(
+        `Permission denied: Your role (${
+          activeRole ? ROLE_DISPLAY_LABELS[activeRole] : 'Guest'
+        }) cannot access ${tab}.`
+      );
+      if (activeWorkspaceTab !== fallbackTab) {
+        setActiveWorkspaceTab(fallbackTab);
+      }
+      return;
+    }
+
     if (
       tab !== 'project_settings' &&
       tab !== 'web_home' &&
@@ -334,7 +385,7 @@ export default function App() {
     setActiveProfileId(target.id);
     setIsPlacementMode(false);
 
-    if (target.global_role === 'worker') {
+    if (!can(target.global_role, 'create_task')) {
       const workerDept =
         target.specialty_department === 'all'
           ? projectDivisions[0]?.code || 'listrik'
@@ -413,18 +464,18 @@ export default function App() {
   );
 
   const canActiveUserChat = useMemo(() => {
-    if (
-      activeProfile.global_role === 'owner' ||
-      activeProfile.global_role === 'mandor'
-    ) {
+    if (can(activeRole, 'toggle_chat_leader_only')) {
       return true;
+    }
+    if (!can(activeRole, 'send_chat_message')) {
+      return false;
     }
     if (activeProjectMemberRecord?.can_chat !== undefined) {
       return activeProjectMemberRecord.can_chat;
     }
     return !activeProject.chat_leader_only;
   }, [
-    activeProfile.global_role,
+    activeRole,
     activeProjectMemberRecord,
     activeProject.chat_leader_only,
   ]);
@@ -481,6 +532,10 @@ export default function App() {
     terminTargetPercent: number;
     generalNote: string;
   }) => {
+    if (!can(activeRole, 'create_project')) {
+      showToast('Permission denied: Only Owner can create projects.');
+      return;
+    }
     const newProjId = `proj-${Date.now()}`;
     const newBpId = `bp-${Date.now()}`;
 
@@ -614,6 +669,10 @@ export default function App() {
     role: GlobalRole;
     department: SpecialtyDepartment;
   }) => {
+    if (!can(activeRole, 'invite_member')) {
+      showToast('Permission denied: Only Owner can invite team members.');
+      return;
+    }
     const newProfileId = `prof-${Date.now()}`;
     const existingProfile = db.profiles.find((p) => p.email === payload.email);
     const workerCount = db.profiles.filter(
@@ -658,7 +717,7 @@ export default function App() {
               user_email: payload.email,
               role: payload.role,
               department: payload.department,
-              can_chat: payload.role === 'owner' || payload.role === 'mandor',
+              can_chat: can(payload.role, 'toggle_chat_leader_only'),
             },
           ];
 
@@ -677,6 +736,10 @@ export default function App() {
     newRole: GlobalRole,
     newDept: SpecialtyDepartment
   ) => {
+    if (!can(activeRole, 'update_member_role')) {
+      showToast('Permission denied: Only Owner can update team member roles.');
+      return;
+    }
     const target = db.profiles.find((p) => p.id === profileId);
     if (!target) return;
 
@@ -700,6 +763,10 @@ export default function App() {
   };
 
   const handleToggleMemberChatAccess = (userEmail: string) => {
+    if (!can(activeRole, 'toggle_member_chat_access')) {
+      showToast('Permission denied: Only Owner can modify chat access.');
+      return;
+    }
     setDb((prev) => {
       const exists = prev.project_members.some(
         (pm) =>
@@ -716,7 +783,7 @@ export default function App() {
               const current =
                 pm.can_chat !== undefined
                   ? pm.can_chat
-                  : pm.role === 'owner' || pm.role === 'mandor';
+                  : can(pm.role, 'toggle_chat_leader_only');
               return { ...pm, can_chat: !current };
             }
             return pm;
@@ -745,7 +812,7 @@ export default function App() {
 
   const handleRemoveMember = (profileId: string) => {
     // 1. Owner-only permission check
-    if (activeProfile.global_role !== 'owner') {
+    if (!can(activeRole, 'remove_member')) {
       showToast('Permission denied: Only Owner can remove team members.');
       return;
     }
@@ -840,6 +907,10 @@ export default function App() {
   };
 
   const handleAddBlueprint = (areaName: string, imageUrl: string) => {
+    if (!can(activeRole, 'add_blueprint')) {
+      showToast('Permission denied: Only Owner or Foreman can add floor plans.');
+      return;
+    }
     const newBpId = `bp-area-${db.blueprints.length + 1}-${Date.now()
       .toString()
       .slice(-3)}`;
@@ -884,6 +955,10 @@ export default function App() {
     coordX: number;
     coordY: number;
   }) => {
+    if (!can(activeRole, 'create_task')) {
+      showToast('Permission denied: Only Owner or Foreman can create tasks.');
+      return;
+    }
     trackOfflineActionIfActive();
     const newPinId = `pin-${Date.now()}`;
     const newPin: PinRecord = {
@@ -947,6 +1022,10 @@ export default function App() {
     newCoordX: number,
     newCoordY: number
   ) => {
+    if (!can(activeRole, 'reposition_task')) {
+      showToast('Permission denied: Only Owner or Foreman can reposition tasks.');
+      return;
+    }
     const targetPin = db.pins.find((p) => p.id === pinId);
     if (!targetPin) return;
     trackOfflineActionIfActive();
@@ -975,6 +1054,10 @@ export default function App() {
   };
 
   const handleWorkerStartProgress = (pin: PinRecord) => {
+    if (!can(activeRole, 'start_progress')) {
+      showToast('Permission denied: You cannot take this task.');
+      return;
+    }
     trackOfflineActionIfActive();
     const sysLog = createActivityRecord({
       blueprintId: pin.blueprint_id,
@@ -1017,6 +1100,10 @@ export default function App() {
     note: string,
     mediaUrl?: string | null
   ) => {
+    if (!can(activeRole, 'add_pin_comment')) {
+      showToast('Permission denied: You cannot add comments to this pin.');
+      return;
+    }
     trackOfflineActionIfActive();
     setDb((prev) => ({
       ...prev,
@@ -1049,6 +1136,10 @@ export default function App() {
     workerCompletionNote?: string,
     voiceDurationSec?: number
   ) => {
+    if (!can(activeRole, 'upload_after_proof')) {
+      showToast('Permission denied: You cannot upload completion proof for this task.');
+      return;
+    }
     trackOfflineActionIfActive();
     const afterUrl =
       customDataUrl ||
@@ -1129,6 +1220,10 @@ export default function App() {
       assignedWorkerEmail: string;
     }
   ) => {
+    if (!can(activeRole, 'edit_task_details')) {
+      showToast('Permission denied: Only Owner or Foreman can update task details.');
+      return;
+    }
     const targetPin = db.pins.find((p) => p.id === pinId);
     if (!targetPin) return;
     trackOfflineActionIfActive();
@@ -1164,6 +1259,10 @@ export default function App() {
     pin: PinRecord,
     leaderApprovalNote?: string
   ) => {
+    if (!can(activeRole, 'approve_task')) {
+      showToast('Permission denied: Only Owner or Foreman can approve tasks.');
+      return;
+    }
     trackOfflineActionIfActive();
     const noteText = leaderApprovalNote
       ? ` Note: "${leaderApprovalNote}"`
@@ -1209,6 +1308,10 @@ export default function App() {
   };
 
   const handleLeaderRejectPin = (pin: PinRecord, rejectReason: string) => {
+    if (!can(activeRole, 'reject_task')) {
+      showToast('Permission denied: Only Owner or Foreman can reject tasks.');
+      return;
+    }
     trackOfflineActionIfActive();
     const nextRevisionCount = pin.revision_count + 1;
 
@@ -1260,6 +1363,10 @@ export default function App() {
     recurrenceCategory?: string,
     resetAfterMedia?: boolean
   ) => {
+    if (!can(activeRole, 'reopen_task')) {
+      showToast('Permission denied: Only Owner or Foreman can reopen tasks.');
+      return;
+    }
     trackOfflineActionIfActive();
     const nextRevisionCount = pin.revision_count + 1;
     const categoryTag = recurrenceCategory
@@ -1319,6 +1426,10 @@ export default function App() {
     pin: PinRecord,
     deleteReason?: string
   ) => {
+    if (!can(activeRole, 'request_delete_task')) {
+      showToast('Permission denied: Only Owner or Foreman can request task deletion.');
+      return;
+    }
     trackOfflineActionIfActive();
     const reasonLabel = deleteReason ? ` Reason: "${deleteReason}"` : '';
 
@@ -1350,7 +1461,7 @@ export default function App() {
     ownerDecisionNote?: string
   ) => {
     // 1. Owner-only check
-    if (activeProfile.global_role !== 'owner') {
+    if (!can(activeRole, 'delete_task')) {
       showToast('Permission denied: Only Owner can delete pins.');
       return;
     }
@@ -1394,6 +1505,10 @@ export default function App() {
   };
 
   const handleOwnerCancelDeleteRequest = (pin: PinRecord) => {
+    if (!can(activeRole, 'cancel_delete_request')) {
+      showToast('Permission denied: Only Owner or Foreman can cancel task deletion requests.');
+      return;
+    }
     trackOfflineActionIfActive();
     const sysLog = createActivityRecord({
       blueprintId: pin.blueprint_id,
@@ -1417,6 +1532,10 @@ export default function App() {
   };
 
   const handleSaveGeneralNote = (nextNote: string) => {
+    if (!can(activeRole, 'save_general_note')) {
+      showToast('Permission denied: Only Owner or Foreman can save general notes.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       projects: prev.projects.map((proj) =>
@@ -1429,6 +1548,10 @@ export default function App() {
   };
 
   const handleToggleChatLeaderOnly = (nextVal: boolean) => {
+    if (!can(activeRole, 'toggle_chat_leader_only')) {
+      showToast('Permission denied: Only Owner or Foreman can toggle chat restrictions.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       projects: prev.projects.map((proj) =>
@@ -1448,6 +1571,10 @@ export default function App() {
     content: string,
     bindToSelectedPin: boolean
   ) => {
+    if (!can(activeRole, 'send_chat_message') || !canActiveUserChat) {
+      showToast('Permission denied: You cannot send messages in this chat.');
+      return;
+    }
     trackOfflineActionIfActive();
     const targetPin = bindToSelectedPin ? selectedPin : undefined;
     const newMsg = createActivityRecord({
@@ -1473,6 +1600,10 @@ export default function App() {
     transcriptSummary: string,
     bindToSelectedPin: boolean
   ) => {
+    if (!can(activeRole, 'send_chat_message') || !canActiveUserChat) {
+      showToast('Permission denied: You cannot send voice notes in this chat.');
+      return;
+    }
     trackOfflineActionIfActive();
     const targetPin = bindToSelectedPin ? selectedPin : undefined;
     const newVoice = createActivityRecord({
@@ -1503,6 +1634,10 @@ export default function App() {
     qtyRequested: number;
     orderDate?: string;
   }) => {
+    if (!can(activeRole, 'allocate_material_to_pin')) {
+      showToast('Permission denied: Only Owner or Foreman can allocate materials to a pin.');
+      return;
+    }
     trackOfflineActionIfActive();
     const pin = db.pins.find((p) => p.id === payload.pinId);
     const invItem = db.inventory_items.find(
@@ -1623,6 +1758,10 @@ export default function App() {
     pinId: string,
     rows: { inventoryItemId: string; qty: number; orderDate: string }[]
   ) => {
+    if (!can(activeRole, 'create_store_request')) {
+      showToast('Permission denied: You cannot create store requests.');
+      return;
+    }
     trackOfflineActionIfActive();
     const pin = db.pins.find((p) => p.id === pinId) || allProjectPins[0];
     if (!pin || rows.length === 0) return;
@@ -1729,6 +1868,10 @@ export default function App() {
       neededDate: string;
     }[]
   ) => {
+    if (!can(activeRole, 'create_purchase_request')) {
+      showToast('Permission denied: You cannot create purchase requests.');
+      return;
+    }
     trackOfflineActionIfActive();
     const pin = db.pins.find((p) => p.id === pinId) || allProjectPins[0];
     if (!pin || rows.length === 0) return;
@@ -1802,6 +1945,10 @@ export default function App() {
     unit: string;
     initialStock: number;
   }) => {
+    if (!can(activeRole, 'manage_inventory_item')) {
+      showToast('Permission denied: Only Warehouse Keeper, Foreman, or Owner can add inventory items.');
+      return;
+    }
     const newItem: InventoryItemRecord = {
       id: `inv-${Date.now()}`,
       project_id: activeProject.id,
@@ -1824,6 +1971,10 @@ export default function App() {
     inventoryItemId: string,
     addedQty: number
   ) => {
+    if (!can(activeRole, 'restock_inventory_item')) {
+      showToast('Permission denied: Only Warehouse Keeper, Foreman, or Owner can restock items.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       inventory_items: prev.inventory_items.map((item) =>
@@ -1840,6 +1991,10 @@ export default function App() {
   };
 
   const handleMarkShoppingItemBought = (allocationId: string) => {
+    if (!can(activeRole, 'mark_shopping_item_bought')) {
+      showToast('Permission denied: Only Warehouse Keeper, Foreman, or Owner can mark items bought.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       material_allocations: prev.material_allocations.map((alloc) =>
@@ -1855,6 +2010,10 @@ export default function App() {
     allocationId: string,
     nextQty: number
   ) => {
+    if (!can(activeRole, 'update_shopping_item_qty')) {
+      showToast('Permission denied: Only Foreman or Owner can update shopping quantities.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       material_allocations: prev.material_allocations.map((alloc) =>
@@ -1866,6 +2025,10 @@ export default function App() {
   };
 
   const handleUpdateTerminTarget = (targetPercent: number) => {
+    if (!can(activeRole, 'edit_termin_target')) {
+      showToast('Permission denied: Only Owner can edit payment stage targets.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       projects: prev.projects.map((proj) =>
@@ -1879,6 +2042,10 @@ export default function App() {
 
   // Division Management & SOP Settings Handlers
   const handleAddDivision = (name: string, shortCode: string) => {
+    if (!can(activeRole, 'add_division')) {
+      showToast('Permission denied: Only Owner or Foreman can add divisions.');
+      return;
+    }
     const slugCode = name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
@@ -1903,6 +2070,10 @@ export default function App() {
   };
 
   const handleUpdateDivisionName = (divisionId: string, nextName: string) => {
+    if (!can(activeRole, 'update_division_name')) {
+      showToast('Permission denied: Only Owner or Foreman can edit division names.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       divisions: (prev.divisions || DEFAULT_DIVISIONS).map((d) =>
@@ -1917,6 +2088,10 @@ export default function App() {
     terminTargetPercent: number;
     estimatedCountdownLabel: string;
   }) => {
+    if (!can(activeRole, 'edit_project_settings')) {
+      showToast('Permission denied: Only Owner can edit project settings.');
+      return;
+    }
     setDb((prev) => ({
       ...prev,
       projects: prev.projects.map((proj) =>
@@ -1942,6 +2117,9 @@ export default function App() {
     attendanceType: 'masuk' | 'pulang';
     faceVerified: boolean;
   }): { ok: boolean; message: string } => {
+    if (!can(activeRole, 'submit_self_attendance')) {
+      return { ok: false, message: 'Permission denied: Cannot submit attendance.' };
+    }
     const matchedWorker = db.profiles.find(
       (p) =>
         (p.worker_code || '').toUpperCase() === payload.workerCode.toUpperCase()
@@ -1983,6 +2161,10 @@ export default function App() {
     divisionCode: string;
     attendanceType: 'masuk' | 'pulang';
   }) => {
+    if (!can(activeRole, 'log_manual_attendance')) {
+      showToast('Permission denied: Only Owner or Foreman can record manual attendance.');
+      return;
+    }
     const worker = db.profiles.find((p) => p.id === payload.workerProfileId);
     if (!worker) return;
 
@@ -2023,7 +2205,7 @@ export default function App() {
     }
     if (
       targetPin.department !== departmentFilter &&
-      activeProfile.global_role !== 'worker'
+      can(activeRole, 'create_task')
     ) {
       setDepartmentFilter(targetPin.department);
     }
@@ -2112,6 +2294,7 @@ export default function App() {
         onClick={() => {
           const res = safeSetItem(STORAGE_KEY, JSON.stringify(db));
           if (res.success) {
+            setSkipAutoPersist(false);
             setStorageQuotaWarning(false);
             showToast('Changes saved to local storage.');
           }
@@ -2178,6 +2361,12 @@ export default function App() {
           onSelectProject={(projId) => setActiveProjectId(projId)}
           onCreateNewProject={handleCreateNewProject}
           onImportDatabaseJson={(importedDb) => {
+            if (!can(activeRole, 'import_database')) {
+              showToast(
+                'Permission denied: Only Owner can import database backups.'
+              );
+              return;
+            }
             setDb(importedDb);
             if (importedDb.projects[0]) {
               setActiveProjectId(importedDb.projects[0].id);
@@ -2335,7 +2524,7 @@ export default function App() {
                       {activeProfile.full_name}
                     </p>
                     <span className="font-mono text-[10px] font-medium uppercase tracking-[0.04em] px-1.5 py-0.5 rounded bg-[#1B365D]/10 dark:bg-white/10 text-[#1B365D] dark:text-[#D97706] shrink-0">
-                      {activeProfile.global_role === 'mandor' ? 'foreman' : activeProfile.global_role}
+                      {ROLE_DISPLAY_LABELS[activeProfile.global_role]}
                     </span>
                   </div>
                   <p className="font-mono text-[11px] text-[#475569] dark:text-[#94A3B8] truncate mt-0.5">
@@ -2361,6 +2550,10 @@ export default function App() {
                         {
                           id: 'prof-worker-listrik',
                           label: 'Worker Budi (Electrical)',
+                        },
+                        {
+                          id: 'prof-warehouse-01',
+                          label: 'Warehouse Keeper (David)',
                         },
                       ].map((roleOpt) => {
                         const isSelected = activeProfile.id === roleOpt.id;
@@ -2652,7 +2845,7 @@ export default function App() {
                       setSelectedPinId(id);
                       setRightPanelTab('inspector');
                     }}
-                    activeRole={activeProfile.global_role}
+                    activeRole={activeRole}
                     canvasMode={canvasMode}
                     onChangeCanvasMode={setCanvasMode}
                     isPlacementMode={isPlacementMode}
@@ -2722,7 +2915,7 @@ export default function App() {
                           areaPins={filteredAreaPins}
                           onSelectPin={(id) => setSelectedPinId(id)}
                           workers={workerProfiles}
-                          activeRole={activeProfile.global_role}
+                          activeRole={activeRole}
                           activeUserName={activeProfile.full_name}
                           inventoryItems={projectInventoryItems}
                           pinAllocations={projectMaterialAllocations.filter(
@@ -2761,7 +2954,7 @@ export default function App() {
                         }
                         activeDepartmentFilter={departmentFilter}
                         selectedPin={selectedPin}
-                        activeRole={activeProfile.global_role}
+                        activeRole={activeRole}
                         activeUserName={activeProfile.full_name}
                         canUserChat={canActiveUserChat}
                         generalNote={activeProject.general_note}
@@ -2888,7 +3081,7 @@ export default function App() {
               divisions={projectDivisions}
               sopLowStockThreshold={activeProject.sop_low_stock_threshold ?? 5}
               activeDepartmentFilter={departmentFilter}
-              activeRole={activeProfile.global_role}
+              activeRole={activeRole}
               selectedPinId={selectedPinId}
               onAllocateMaterialToPin={handleAllocateMaterialToPin}
               onAddNewInventoryItem={handleAddNewInventoryItem}
@@ -2929,6 +3122,7 @@ export default function App() {
                   (m) => m.project_id === activeProject.id
                 )}
                 divisions={projectDivisions}
+                activeRole={activeRole}
                 activeProfile={activeProfile}
                 pins={allProjectPins}
                 chatLeaderOnly={activeProject.chat_leader_only}
@@ -3006,16 +3200,18 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  if (activeProfile.global_role !== 'owner') {
+                  if (!can(activeRole, 'reset_database')) {
                     showToast(
                       'Permission denied: Only Owner can reset the database.'
                     );
                     setIsResetConfirmModalOpen(false);
                     return;
                   }
+                  setSkipAutoPersist(false);
                   safeRemoveItem(STORAGE_KEY_V9);
                   const freshSeed = migrateDatabaseState(INITIAL_VONTA_DATABASE);
                   setDb(freshSeed);
+                  safeSetItem(STORAGE_KEY_V9, JSON.stringify(freshSeed));
                   setActiveProfileId('prof-owner-01');
                   setActiveProjectId('proj-uluwatu-01');
                   setThemeMode('light');
@@ -3066,6 +3262,12 @@ export default function App() {
         onSelectProject={(projId) => setActiveProjectId(projId)}
         onCreateNewProject={handleCreateNewProject}
         onImportDatabaseJson={(importedDb) => {
+          if (!can(activeRole, 'import_database')) {
+            showToast(
+              'Permission denied: Only Owner can import database backups.'
+            );
+            return;
+          }
           setDb(importedDb);
           if (importedDb.projects[0]) {
             setActiveProjectId(importedDb.projects[0].id);

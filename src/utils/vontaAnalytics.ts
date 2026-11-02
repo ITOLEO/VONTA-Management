@@ -5,6 +5,7 @@ import {
   PinRecord,
   SpecialtyDepartment,
 } from '../types/schema';
+import { can, Action } from './permissions';
 
 export interface TerminProgressSummary {
   totalPins: number;
@@ -227,64 +228,33 @@ export type RlsOperation =
   | 'confirm_delete_pin'
   | 'edit_termin_target';
 
+const RLS_OPERATION_MAP: Record<RlsOperation, Action> = {
+  create_pin: 'create_task',
+  upload_after_proof: 'upload_after_proof',
+  approve_reject_pin: 'approve_task',
+  reopen_ghost_pin: 'reopen_task',
+  request_delete_pin: 'request_delete_task',
+  direct_delete_pin: 'delete_task',
+  confirm_delete_pin: 'delete_task',
+  edit_termin_target: 'edit_termin_target',
+};
+
 /**
  * Step 16: Evaluasi kebijakan keamanan Row Level Security (RLS) per peran pengguna sesuai PRD.
+ * Thin wrapper delegating to the centralized can() permission service.
  */
 export function evaluateRlsPermission(
   role: GlobalRole,
   operation: RlsOperation
 ): { allowed: boolean; reason: string } {
-  switch (operation) {
-    case 'create_pin':
-    case 'approve_reject_pin':
-      return role === 'owner' || role === 'mandor'
-        ? {
-            allowed: true,
-            reason: 'Allowed for Owner & Foreman.',
-          }
-        : {
-            allowed: false,
-            reason: 'Denied: Workers cannot create or approve pins.',
-          };
-    case 'upload_after_proof':
-      return {
-        allowed: true,
-        reason: 'Allowed for Workers and Owner & Foreman to upload After photos.',
-      };
-    case 'reopen_ghost_pin':
-      return role === 'owner' || role === 'mandor'
-        ? {
-            allowed: true,
-            reason: 'Allowed to reopen a resolved pin.',
-          }
-        : {
-            allowed: false,
-            reason: 'Denied: Workers cannot reopen resolved pins.',
-          };
-    case 'request_delete_pin':
-      return role === 'mandor' || role === 'owner'
-        ? {
-            allowed: true,
-            reason: 'Foreman can request pin deletion for Owner approval.',
-          }
-        : {
-            allowed: false,
-            reason: 'Denied: Workers cannot request pin deletion.',
-          };
-    case 'direct_delete_pin':
-    case 'confirm_delete_pin':
-    case 'edit_termin_target':
-      return role === 'owner'
-        ? {
-            allowed: true,
-            reason: 'Owner permission verified.',
-          }
-        : {
-            allowed: false,
-            reason:
-              'Only the Owner can permanently delete pins or edit payment stage targets.',
-          };
-  }
+  const action = RLS_OPERATION_MAP[operation];
+  const allowed = can(role, action);
+  return {
+    allowed,
+    reason: allowed
+      ? `Allowed: ${role} has permission for ${operation}.`
+      : `Denied: ${role} does not have permission for ${operation}.`,
+  };
 }
 
 export interface OfflineQueueEntry {

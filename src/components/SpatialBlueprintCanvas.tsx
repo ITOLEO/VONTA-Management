@@ -26,13 +26,14 @@ import {
   ChevronUp,
   Upload,
 } from 'lucide-react';
+import { can } from '../utils/permissions';
 
 interface SpatialBlueprintCanvasProps {
   blueprint: BlueprintRecord | undefined;
   pins: PinRecord[];
   selectedPinId: string | null;
   onSelectPin: (pinId: string) => void;
-  activeRole: GlobalRole;
+  activeRole?: GlobalRole | null;
   canvasMode: '2.5d' | '2d';
   onChangeCanvasMode: (mode: '2.5d' | '2d') => void;
   isPlacementMode: boolean;
@@ -101,8 +102,8 @@ export const SpatialBlueprintCanvas: React.FC<SpatialBlueprintCanvasProps> = ({
   } | null>(null);
   const planeRef = useRef<HTMLDivElement | null>(null);
 
-  const isLeader = activeRole === 'owner' || activeRole === 'mandor';
-  const isWorker = activeRole === 'worker';
+  const isLeader = can(activeRole, 'create_task');
+  const isWorker = !isLeader;
 
   useEffect(() => {
     setImgLoadError(false);

@@ -8,6 +8,7 @@ import {
   ProfileRecord,
 } from '../types/schema';
 import { getDepartmentMeta, PIN_STATUS_META } from '../data/initialDatabase';
+import { can, ROLE_DISPLAY_LABELS } from '../utils/permissions';
 import { PhotoCaptureAndMarkupStudio } from './PhotoCaptureAndMarkupStudio';
 import {
   Camera,
@@ -35,7 +36,7 @@ interface BeforeAfterSliderGateProps {
   areaPins?: PinRecord[];
   onSelectPin?: (pinId: string) => void;
   workers?: ProfileRecord[];
-  activeRole: GlobalRole;
+  activeRole?: GlobalRole | null;
   activeUserName: string;
   inventoryItems: InventoryItemRecord[];
   pinAllocations: MaterialAllocationRecord[];
@@ -155,9 +156,9 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
 
   const sliderContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const isLeader = activeRole === 'owner' || activeRole === 'mandor';
-  const isOwner = activeRole === 'owner';
-  const isMandor = activeRole === 'mandor';
+  const isLeader = can(activeRole, 'create_task');
+  const isOwner = can(activeRole, 'delete_task');
+  const isMandor = can(activeRole, 'request_delete_task') && !isOwner;
 
   const hasAfterMedia = Boolean(pin.after_media_url);
   // Jika sudah ada revisi dan tersimpan foto sebelum revisi, Before menampilkan foto sebelum revisi terakhir
@@ -396,6 +397,7 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
 
             {/* Tahap 1 -> 2: Jika status masih "Reported" (open/reopened), tombol Ambil Pekerjaan mengubah status jadi "On Progress" */}
             {(pin.status === 'open' || pin.status === 'reopened') &&
+              can(activeRole, 'start_progress') &&
               onWorkerStartProgress && (
                 <button
                   type="button"
@@ -408,62 +410,64 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
               )}
 
             {/* Tahap 2 -> 3: Input Keterangan Terbaru + Upload Foto After untuk mengubah status ke "In Preview" */}
-            <div className="p-2.5 rounded-lg border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] space-y-2">
-              <input
-                type="text"
-                value={workerStatusNote}
-                onChange={(e) => setWorkerStatusNote(e.target.value)}
-                placeholder="Type worker status note before uploading photo..."
-                className="w-full h-8 px-2.5 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] text-[12px] text-[#141619] dark:text-[#F8FAFC]"
-              />
-              <div className="flex items-center gap-1.5">
+            {can(activeRole, 'upload_after_proof') && (
+              <div className="p-2.5 rounded-lg border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] space-y-2">
                 <input
-                  ref={afterQuickFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleQuickAfterFileSelect}
-                  className="hidden"
+                  type="text"
+                  value={workerStatusNote}
+                  onChange={(e) => setWorkerStatusNote(e.target.value)}
+                  placeholder="Type worker status note before uploading photo..."
+                  className="w-full h-8 px-2.5 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] text-[12px] text-[#141619] dark:text-[#F8FAFC]"
                 />
-                <button
-                  type="button"
-                  onClick={() =>
-                    onWorkerUploadAfter(
-                      pin,
-                      undefined,
-                      workerStatusNote.trim() ||
-                        'Work completed and latest photo uploaded (Pending Review).',
-                      12
-                    )
-                  }
-                  className="flex-1 h-8 px-2.5 rounded-[6px] bg-[#0284C7] hover:bg-sky-700 text-white text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors truncate cursor-pointer"
-                >
-                  <Upload className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">
-                    Upload Photo &amp; Status (Pending Review)
-                  </span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    ref={afterQuickFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleQuickAfterFileSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onWorkerUploadAfter(
+                        pin,
+                        undefined,
+                        workerStatusNote.trim() ||
+                          'Work completed and latest photo uploaded (Pending Review).',
+                        12
+                      )
+                    }
+                    className="flex-1 h-8 px-2.5 rounded-[6px] bg-[#0284C7] hover:bg-sky-700 text-white text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-colors truncate cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      Upload Photo &amp; Status (Pending Review)
+                    </span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => afterQuickFileInputRef.current?.click()}
-                  title="Select Photo File from Device"
-                  className="h-8 px-2.5 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] hover:border-[#1B365D] text-[11px] font-medium text-[#141619] dark:text-[#F8FAFC] flex items-center gap-1 shrink-0 cursor-pointer"
-                >
-                  <ImageIcon className="w-3.5 h-3.5" />
-                  <span>File</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => afterQuickFileInputRef.current?.click()}
+                    title="Select Photo File from Device"
+                    className="h-8 px-2.5 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] hover:border-[#1B365D] text-[11px] font-medium text-[#141619] dark:text-[#F8FAFC] flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>File</span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setIsAfterStudioOpen(true)}
-                  title="Open Camera & Markup Studio"
-                  aria-label="Open Camera and Markup Studio"
-                  className="h-8 w-8 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] hover:border-[#1B365D] flex items-center justify-center text-[#475569] dark:text-[#94A3B8] shrink-0 cursor-pointer"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAfterStudioOpen(true)}
+                    title="Open Camera & Markup Studio"
+                    aria-label="Open Camera and Markup Studio"
+                    className="h-8 w-8 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] hover:border-[#1B365D] flex items-center justify-center text-[#475569] dark:text-[#94A3B8] shrink-0 cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
 
@@ -475,7 +479,7 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
                 <h3 className="text-[14px] font-semibold text-[#141619] dark:text-[#F8FAFC] leading-snug">
                   {pin.title}
                 </h3>
-                {isLeader && onLeaderUpdatePinMeta && (
+                {can(activeRole, 'edit_task_details') && onLeaderUpdatePinMeta && (
                   <button
                     type="button"
                     onClick={() => setIsEditingMeta(true)}
@@ -573,8 +577,10 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
               pinComments.map((cmt) => {
                 const roleStr = cmt.sender_role || 'worker';
                 const nameStr = cmt.sender_name || 'Team Member';
-                const isMandorOrOwner =
-                  roleStr === 'mandor' || roleStr === 'owner';
+                const isMandorOrOwner = can(
+                  roleStr as GlobalRole,
+                  'edit_task_details'
+                );
                 return (
                   <div
                     key={cmt.id}
@@ -589,7 +595,7 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
                         {nameStr}
                       </span>
                       <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[#475569] dark:text-[#94A3B8]">
-                        {(roleStr === 'mandor' ? 'foreman' : roleStr).toUpperCase()}
+                        {(ROLE_DISPLAY_LABELS[roleStr as GlobalRole] || roleStr).toUpperCase()}
                       </span>
                     </div>
                     <p className="text-[#141619] dark:text-[#F8FAFC] leading-relaxed">
@@ -609,55 +615,61 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
           </div>
 
           {/* Input Note & Gambar pada Comment Box */}
-          <form onSubmit={handlePostComment} className="space-y-2 pt-1">
-            {commentPhotoDataUrl && (
-              <div className="relative inline-block">
-                <img
-                  src={commentPhotoDataUrl}
-                  alt="Attachment preview"
-                  className="h-14 w-24 object-cover rounded border border-[#E2E6EC]"
+          {can(activeRole, 'add_pin_comment') ? (
+            <form onSubmit={handlePostComment} className="space-y-2 pt-1">
+              {commentPhotoDataUrl && (
+                <div className="relative inline-block">
+                  <img
+                    src={commentPhotoDataUrl}
+                    alt="Attachment preview"
+                    className="h-14 w-24 object-cover rounded border border-[#E2E6EC]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCommentPhotoDataUrl(null)}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#DC2626] text-white flex items-center justify-center text-[10px]"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={commentFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCommentImageSelect}
+                  className="hidden"
                 />
                 <button
                   type="button"
-                  onClick={() => setCommentPhotoDataUrl(null)}
-                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#DC2626] text-white flex items-center justify-center text-[10px]"
+                  onClick={() => commentFileInputRef.current?.click()}
+                  title="Attach Image to Comments"
+                  className="h-8 w-8 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] flex items-center justify-center text-[#475569] hover:text-[#141619] shrink-0 cursor-pointer"
                 >
-                  ×
+                  <ImageIcon className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  type="text"
+                  value={commentNote}
+                  onChange={(e) => setCommentNote(e.target.value)}
+                  placeholder="Write a revision or progress note for this pin..."
+                  className="flex-1 h-8 px-2.5 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] text-[12px] text-[#141619] dark:text-[#F8FAFC]"
+                />
+                <button
+                  type="submit"
+                  className="h-8 px-2.5 rounded-[6px] bg-[#1B365D] hover:bg-[#152a4a] text-white text-[11px] font-medium flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>Send</span>
                 </button>
               </div>
-            )}
-            <div className="flex items-center gap-1.5">
-              <input
-                ref={commentFileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleCommentImageSelect}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => commentFileInputRef.current?.click()}
-                title="Attach Image to Comments"
-                className="h-8 w-8 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] flex items-center justify-center text-[#475569] hover:text-[#141619] shrink-0 cursor-pointer"
-              >
-                <ImageIcon className="w-3.5 h-3.5" />
-              </button>
-              <input
-                type="text"
-                value={commentNote}
-                onChange={(e) => setCommentNote(e.target.value)}
-                placeholder="Write a revision or progress note for this pin..."
-                className="flex-1 h-8 px-2.5 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] text-[12px] text-[#141619] dark:text-[#F8FAFC]"
-              />
-              <button
-                type="submit"
-                className="h-8 px-2.5 rounded-[6px] bg-[#1B365D] hover:bg-[#152a4a] text-white text-[11px] font-medium flex items-center gap-1 shrink-0 cursor-pointer"
-              >
-                <Send className="w-3 h-3" />
-                <span>Send</span>
-              </button>
+            </form>
+          ) : (
+            <div className="text-[12px] text-[#475569] dark:text-[#94A3B8] italic pt-1 text-center">
+              Comment posting is disabled for your role ({activeRole ? ROLE_DISPLAY_LABELS[activeRole] : 'Guest'}).
             </div>
-          </form>
+          )}
         </div>
 
         {/* Ringkasan Material Terikat Pin */}
@@ -798,68 +810,74 @@ export const BeforeAfterSliderGate: React.FC<BeforeAfterSliderGateProps> = ({
         )}
       </div>
 
-      {/* 5. FOOTER BAWAH: APPROVE & TOLAK/REVISI (TANPA TULISAN HIJAU DAN MERAH) */}
-      <div className="p-2.5 border-t border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] flex items-center gap-1.5">
-        <button
-          type="button"
-          disabled={!isLeader || !hasAfterMedia || pin.status === 'resolved'}
-          onClick={() => onLeaderApprovePin(pin)}
-          className="flex-1 min-w-0 h-9 px-2 rounded-[6px] bg-[#16A34A] hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12px] font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
-        >
-          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">Approve</span>
-        </button>
+      {/* 5. FOOTER BAWAH: APPROVE & TOLAK/REVISI */}
+      {isLeader || isOwner || isMandor ? (
+        <div className="p-2.5 border-t border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={!isLeader || !hasAfterMedia || pin.status === 'resolved'}
+            onClick={() => onLeaderApprovePin(pin)}
+            className="flex-1 min-w-0 h-9 px-2 rounded-[6px] bg-[#16A34A] hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12px] font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Approve</span>
+          </button>
 
-        {pin.status === 'resolved' && isOwner ? (
-          <button
-            type="button"
-            onClick={() => setShowReopenInput((v) => !v)}
-            className="flex-1 min-w-0 h-9 px-2 rounded-[6px] bg-[#DC2626] hover:bg-red-700 text-white text-[12px] font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
-          >
-            <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">Revise</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled={!isLeader}
-            onClick={() => setShowRejectInput((v) => !v)}
-            className="flex-1 min-w-0 h-9 px-2 rounded-[6px] bg-[#DC2626] hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12px] font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
-          >
-            <XCircle className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">Reject / Revise</span>
-          </button>
-        )}
+          {pin.status === 'resolved' && isOwner ? (
+            <button
+              type="button"
+              onClick={() => setShowReopenInput((v) => !v)}
+              className="flex-1 min-w-0 h-9 px-2 rounded-[6px] bg-[#DC2626] hover:bg-red-700 text-white text-[12px] font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Revise</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!isLeader}
+              onClick={() => setShowRejectInput((v) => !v)}
+              className="flex-1 min-w-0 h-9 px-2 rounded-[6px] bg-[#DC2626] hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12px] font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
+            >
+              <XCircle className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Reject / Revise</span>
+            </button>
+          )}
 
-        {/* Ikon Hapus Pin (Owner Hapus Langsung, Mandor Ajukan Izin Hapus) */}
-        {isOwner ? (
-          <button
-            type="button"
-            onClick={() => onOwnerConfirmDeletePin(pin)}
-            title="Delete Pin (Owner Only)"
-            aria-label={`Delete Pin ${pin.pin_code} (Owner Only)`}
-            className="h-9 w-9 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] text-[#475569] hover:text-[#DC2626] hover:border-[#DC2626] flex items-center justify-center shrink-0 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        ) : isMandor ? (
-          <button
-            type="button"
-            disabled={pin.delete_requested_by_mandor}
-            onClick={() =>
-              onMandorRequestDeletePin(
-                pin,
-                'Pin deletion requested by Foreman.'
-              )
-            }
-            title="Request Delete Approval from Owner"
-            aria-label={`Request delete approval for Pin ${pin.pin_code} from Owner`}
-            className="h-9 w-9 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] text-[#475569] hover:text-[#B45309] disabled:opacity-40 flex items-center justify-center shrink-0 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        ) : null}
-      </div>
+          {/* Ikon Hapus Pin (Owner Hapus Langsung, Mandor Ajukan Izin Hapus) */}
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={() => onOwnerConfirmDeletePin(pin)}
+              title="Delete Pin (Owner Only)"
+              aria-label={`Delete Pin ${pin.pin_code} (Owner Only)`}
+              className="h-9 w-9 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] text-[#475569] hover:text-[#DC2626] hover:border-[#DC2626] flex items-center justify-center shrink-0 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          ) : isMandor ? (
+            <button
+              type="button"
+              disabled={pin.delete_requested_by_mandor}
+              onClick={() =>
+                onMandorRequestDeletePin(
+                  pin,
+                  'Pin deletion requested by Foreman.'
+                )
+              }
+              title="Request Delete Approval from Owner"
+              aria-label={`Request delete approval for Pin ${pin.pin_code} from Owner`}
+              className="h-9 w-9 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] bg-white dark:bg-[#161F2C] text-[#475569] hover:text-[#B45309] disabled:opacity-40 flex items-center justify-center shrink-0 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="p-2.5 border-t border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] text-center text-[12px] text-[#475569] dark:text-[#94A3B8] italic">
+          Read-only mode: Task approvals and revisions are managed by Foreman and Owner.
+        </div>
+      )}
 
       {/* Modal Studio Kamera & Coretan Markup Foto After */}
       {isAfterStudioOpen && (

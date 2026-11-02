@@ -13,6 +13,7 @@ import {
   VontaDatabaseState,
 } from '../types/schema';
 import { DEFAULT_DIVISIONS, getDepartmentMeta } from '../data/initialDatabase';
+import { can } from '../utils/permissions';
 import {
   Package,
   ShoppingCart,
@@ -1403,9 +1404,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   onWorkerSubmitAttendance,
   onLeaderManualAttendance,
 }) => {
-  const isLeader =
-    activeProfile.global_role === 'owner' ||
-    activeProfile.global_role === 'mandor';
+  const isLeader = can(
+    activeProfile.global_role,
+    'log_manual_attendance'
+  );
 
   const workerProfiles = useMemo(
     () => profiles.filter((p) => p.global_role === 'worker'),

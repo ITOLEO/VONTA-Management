@@ -14,6 +14,7 @@ import {
   evaluateRlsPermission,
 } from '../utils/vontaAnalytics';
 import { safeSetItem, safeGetItem } from '../utils/storage';
+import { ROLE_DISPLAY_LABELS } from '../utils/permissions';
 import {
   X,
   FolderPlus,
@@ -525,7 +526,7 @@ export const SupabaseAndProjectManagerModal: React.FC<
                       </h5>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {(['owner', 'mandor', 'worker'] as GlobalRole[]).map(
+                      {(['owner', 'mandor', 'warehouse', 'worker'] as GlobalRole[]).map(
                         (roleOpt) => (
                           <button
                             key={roleOpt}
@@ -537,7 +538,7 @@ export const SupabaseAndProjectManagerModal: React.FC<
                                 : 'bg-[#F8F7F4] dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-[#E2E6EC] dark:border-slate-700'
                             }`}
                           >
-                            {roleOpt === 'mandor' ? 'foreman' : roleOpt}
+                            {ROLE_DISPLAY_LABELS[roleOpt]}
                           </button>
                         )
                       )}
@@ -667,7 +668,7 @@ export const SupabaseAndProjectManagerModal: React.FC<
                                 {entry.pinCode}
                               </span>
                               <span className="text-slate-500">
-                                by {entry.actorName} ({entry.actorRole === 'mandor' ? 'foreman' : entry.actorRole})
+                                by {entry.actorName} ({ROLE_DISPLAY_LABELS[entry.actorRole as GlobalRole] || entry.actorRole})
                               </span>
                             </div>
                             <p className="text-xs font-semibold text-[#141619] dark:text-white mt-1">

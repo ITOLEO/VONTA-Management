@@ -14,6 +14,7 @@ import {
   DEPARTMENT_META,
   SUPABASE_SQL_SCHEMA_STRING,
 } from '../data/initialDatabase';
+import { ROLE_DISPLAY_LABELS } from '../utils/permissions';
 import { PhotoCaptureAndMarkupStudio } from './PhotoCaptureAndMarkupStudio';
 import {
   X,
@@ -132,9 +133,7 @@ export const InviteAuthModal: React.FC<InviteModalProps> = ({
                         {prof.full_name}
                       </span>
                       <span className="font-mono text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-[#1B365D]/10 dark:bg-slate-700 text-[#1B365D] dark:text-[#38BDF8]">
-                        {prof.global_role === 'mandor'
-                          ? 'foreman'
-                          : prof.global_role}
+                        {ROLE_DISPLAY_LABELS[prof.global_role]}
                       </span>
                     </div>
                     <div className="flex items-center justify-between gap-2 mt-1">
@@ -208,6 +207,7 @@ export const InviteAuthModal: React.FC<InviteModalProps> = ({
                 >
                   <option value="worker">Worker (Field Specialist)</option>
                   <option value="mandor">Foreman (Site Supervisor)</option>
+                  <option value="warehouse">Warehouse Keeper (Materials)</option>
                   <option value="owner">Co-Owner / Architect</option>
                 </select>
               </div>

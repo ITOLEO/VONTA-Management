@@ -9,6 +9,7 @@ import {
   SpecialtyDepartment,
 } from '../types/schema';
 import { DEFAULT_DIVISIONS, getDepartmentMeta } from '../data/initialDatabase';
+import { can } from '../utils/permissions';
 import {
   Package,
   ShoppingCart,
@@ -29,7 +30,7 @@ interface InventoryAndShoppingViewProps {
   divisions?: DivisionRecord[];
   sopLowStockThreshold?: number;
   activeDepartmentFilter: SpecialtyDepartment;
-  activeRole: GlobalRole;
+  activeRole?: GlobalRole | null;
   selectedPinId: string | null;
   onAllocateMaterialToPin: (payload: {
     pinId: string;
@@ -131,7 +132,10 @@ export const InventoryAndShoppingView: React.FC<
   sectionMode = 'inventory',
   onSwitchSectionMode,
 }) => {
-  const isLeader = activeRole === 'owner' || activeRole === 'mandor';
+  const canManageItem = can(activeRole, 'manage_inventory_item');
+  const canRestock = can(activeRole, 'restock_inventory_item');
+  const canMarkBought = can(activeRole, 'mark_shopping_item_bought');
+  const canUpdateQty = can(activeRole, 'update_shopping_item_qty');
 
   const [targetPinId, setTargetPinId] = useState<string>(
     selectedPinId || pins[0]?.id || ''
@@ -432,7 +436,7 @@ export const InventoryAndShoppingView: React.FC<
                 />
               </div>
 
-              {isLeader && (
+              {canManageItem && (
                 <button
                   type="button"
                   onClick={() => setShowAddStockForm((v) => !v)}
@@ -445,7 +449,7 @@ export const InventoryAndShoppingView: React.FC<
             </div>
           </div>
 
-          {showAddStockForm && isLeader && (
+          {showAddStockForm && canManageItem && (
             <form
               onSubmit={handleAddStockSubmit}
               className="p-3.5 rounded-[8px] border border-[#E2E6EC] dark:border-[#263346] bg-[#F8F7F4] dark:bg-[#0F141C] grid grid-cols-1 sm:grid-cols-5 gap-3 items-end text-[12px]"
@@ -584,7 +588,7 @@ export const InventoryAndShoppingView: React.FC<
                         </span>
                       </td>
                       <td className="py-3 px-3 text-right">
-                        {isLeader && (
+                        {canRestock && (
                           <button
                             type="button"
                             onClick={() => onRestockInventoryItem(item.id, 5)}
@@ -775,7 +779,7 @@ export const InventoryAndShoppingView: React.FC<
                           </td>
                           <td className="py-2.5 px-3">
                             <div className="inline-flex items-center gap-1 font-mono tabular-nums">
-                              {onUpdateShoppingItemQty && (
+                              {canUpdateQty && onUpdateShoppingItemQty && (
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -793,7 +797,7 @@ export const InventoryAndShoppingView: React.FC<
                               <span className="px-1.5 font-semibold">
                                 {item.qty_requested} {item.unit}
                               </span>
-                              {onUpdateShoppingItemQty && (
+                              {canUpdateQty && onUpdateShoppingItemQty && (
                                 <button
                                   type="button"
                                   onClick={() =>
@@ -811,7 +815,7 @@ export const InventoryAndShoppingView: React.FC<
                             </div>
                           </td>
                           <td className="py-2.5 px-3 text-right">
-                            {isLeader && (
+                            {canMarkBought && (
                               <button
                                 type="button"
                                 onClick={() =>

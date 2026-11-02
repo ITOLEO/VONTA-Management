@@ -7,6 +7,7 @@ import {
   SpecialtyDepartment,
 } from '../types/schema';
 import { getDepartmentMeta } from '../data/initialDatabase';
+import { can, ROLE_DISPLAY_LABELS } from '../utils/permissions';
 import {
   Mic,
   Play,
@@ -30,7 +31,7 @@ interface ContextualLiveStreamPanelProps {
   activeAreaName: string;
   activeDepartmentFilter: SpecialtyDepartment;
   selectedPin: PinRecord | undefined;
-  activeRole: GlobalRole;
+  activeRole?: GlobalRole | null;
   activeUserName: string;
   canUserChat?: boolean;
   generalNote: string;
@@ -71,7 +72,7 @@ export const ContextualLiveStreamPanel: React.FC<
   onSelectPinFromStream,
   onOpenTeamPermissions,
 }) => {
-  const isLeader = activeRole === 'owner' || activeRole === 'mandor';
+  const isLeader = can(activeRole, 'toggle_chat_leader_only');
   const activeDivisionMeta = getDepartmentMeta(
     activeDepartmentFilter === 'all' ? 'listrik' : activeDepartmentFilter,
     divisions
@@ -299,7 +300,7 @@ export const ContextualLiveStreamPanel: React.FC<
                       {msg.sender_name}
                     </span>
                     <span className="font-mono text-[10px] uppercase px-1.5 py-0.5 rounded bg-[#1B365D]/10 dark:bg-white/10 text-[#1B365D] dark:text-[#D97706]">
-                      {msg.sender_role === 'mandor' ? 'foreman' : msg.sender_role}
+                      {ROLE_DISPLAY_LABELS[msg.sender_role as GlobalRole] || msg.sender_role}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
