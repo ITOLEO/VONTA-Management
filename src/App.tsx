@@ -68,8 +68,13 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { safeSetItem, safeGetItem, safeRemoveItem } from './utils/storage';
+import {
+  STORAGE_KEY_V9,
+  loadInitialDatabase,
+  migrateDatabaseState,
+} from './utils/migration';
 
-const STORAGE_KEY = 'vonta_supabase_db_v8';
+const STORAGE_KEY = STORAGE_KEY_V9;
 
 type WorkspaceTabId =
   | 'web_home'
@@ -86,23 +91,17 @@ type WorkspaceTabId =
   | 'project_settings';
 
 export default function App() {
-  // 1. Database State
-  const [db, setDb] = useState<VontaDatabaseState>(() => {
-    try {
-      const saved = safeGetItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved) as VontaDatabaseState;
-      }
-    } catch {
-      // Fallback to seed database
-    }
-    return INITIAL_VONTA_DATABASE;
-  });
-
-  const [storageQuotaWarning, setStorageQuotaWarning] = useState<boolean>(false);
+  // 1. Database State & Safe Schema Version 9 Migration
+  const [initialDbLoad] = useState(() => loadInitialDatabase());
+  const [db, setDb] = useState<VontaDatabaseState>(initialDbLoad.state);
+  const [storageQuotaWarning, setStorageQuotaWarning] = useState<boolean>(
+    initialDbLoad.storageWarning
+  );
+  const [isResetConfirmModalOpen, setIsResetConfirmModalOpen] =
+    useState<boolean>(false);
 
   useEffect(() => {
-    const res = safeSetItem(STORAGE_KEY, JSON.stringify(db));
+    const res = safeSetItem(STORAGE_KEY_V9, JSON.stringify(db));
     if (!res.success) {
       setStorageQuotaWarning(true);
     } else {
@@ -2956,13 +2955,7 @@ export default function App() {
               onBackToProject={() => handleNavigateTab(lastNonSettingsTab)}
               dbState={db}
               onResetDatabase={() => {
-                safeRemoveItem(STORAGE_KEY);
-                setDb(INITIAL_VONTA_DATABASE);
-                setActiveProfileId('prof-owner-01');
-                setActiveProjectId('proj-uluwatu-01');
-                setThemeMode('light');
-                setDepartmentFilter('listrik');
-                showToast('Database reset to default seed data.');
+                setIsResetConfirmModalOpen(true);
               }}
             />
           )}
@@ -2978,6 +2971,66 @@ export default function App() {
         onSelectProfile={handleSwitchProfile}
         onInviteMember={handleInviteMember}
       />
+
+      {/* MODAL KONFIRMASI RESET DATABASE KE SEED DATA (OWNER ONLY) */}
+      {isResetConfirmModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+        >
+          <div className="w-full max-w-md rounded-xl border border-[#DC2626]/30 bg-white dark:bg-[#161F2C] p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-[#DC2626]">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h2
+                id="reset-modal-title"
+                className="text-base font-bold text-[#141619] dark:text-[#F8FAFC]"
+              >
+                Reset Project Database to Seed Data
+              </h2>
+            </div>
+            <p className="text-xs sm:text-sm text-[#475569] dark:text-[#94A3B8] leading-relaxed">
+              WARNING: This action is permanent and cannot be undone. All custom
+              tasks, pin revisions, material allocations, and attendance logs
+              will be cleared and restored to default factory seed data.
+            </p>
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmModalOpen(false)}
+                className="h-9 px-4 rounded-[6px] border border-[#E2E6EC] dark:border-[#263346] text-[#475569] dark:text-[#94A3B8] hover:text-[#141619] dark:hover:text-[#F8FAFC] text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeProfile.global_role !== 'owner') {
+                    showToast(
+                      'Permission denied: Only Owner can reset the database.'
+                    );
+                    setIsResetConfirmModalOpen(false);
+                    return;
+                  }
+                  safeRemoveItem(STORAGE_KEY_V9);
+                  const freshSeed = migrateDatabaseState(INITIAL_VONTA_DATABASE);
+                  setDb(freshSeed);
+                  setActiveProfileId('prof-owner-01');
+                  setActiveProjectId('proj-uluwatu-01');
+                  setThemeMode('light');
+                  setDepartmentFilter('listrik');
+                  setIsResetConfirmModalOpen(false);
+                  showToast('Database reset to default seed data.');
+                }}
+                className="h-9 px-4 rounded-[6px] bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold cursor-pointer"
+              >
+                Confirm Reset Database
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <UploadBlueprintModal
         isOpen={isUploadBlueprintModalOpen}

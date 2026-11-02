@@ -1,4 +1,4 @@
-export type GlobalRole = 'owner' | 'mandor' | 'worker';
+export type GlobalRole = 'owner' | 'mandor' | 'worker' | 'warehouse';
 export type DepartmentOnly = 'listrik' | 'pipa' | 'sipil' | 'cat' | string;
 export type SpecialtyDepartment = 'all' | DepartmentOnly;
 export type ThemePreference = 'light' | 'dark';
@@ -188,6 +188,7 @@ export interface ActivityStreamRecord {
 
 // Struktur Database Lengkap Vonta
 export interface VontaDatabaseState {
+  schema_version?: number;
   profiles: ProfileRecord[];
   projects: ProjectRecord[];
   project_members: ProjectMemberRecord[];
