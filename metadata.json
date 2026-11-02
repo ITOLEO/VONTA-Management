@@ -1,0 +1,6 @@
+{
+  "name": "Vonta Spatial Construction Workspace",
+  "description": "Interactive 2D and 3D floor plan platform for construction project management, pin inspection, and field coordination.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
