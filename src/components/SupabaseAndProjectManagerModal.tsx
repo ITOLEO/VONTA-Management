@@ -13,6 +13,7 @@ import {
   RlsOperation,
   evaluateRlsPermission,
 } from '../utils/vontaAnalytics';
+import { safeSetItem, safeGetItem } from '../utils/storage';
 import {
   X,
   FolderPlus,
@@ -93,10 +94,10 @@ export const SupabaseAndProjectManagerModal: React.FC<
   const [copiedSchema, setCopiedSchema] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
   const [supabaseUrlInput, setSupabaseUrlInput] = useState(
-    localStorage.getItem('vonta_manual_supabase_url') || ''
+    safeGetItem('vonta_manual_supabase_url') || ''
   );
   const [supabaseAnonKeyInput, setSupabaseAnonKeyInput] = useState(
-    localStorage.getItem('vonta_manual_supabase_key') || ''
+    safeGetItem('vonta_manual_supabase_key') || ''
   );
   const [savedConfigMsg, setSavedConfigMsg] = useState<string | null>(null);
 
@@ -162,14 +163,17 @@ export const SupabaseAndProjectManagerModal: React.FC<
 
   const handleSaveSupabaseCredentials = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('vonta_manual_supabase_url', supabaseUrlInput.trim());
-    localStorage.setItem(
-      'vonta_manual_supabase_key',
-      supabaseAnonKeyInput.trim()
-    );
-    setSavedConfigMsg(
-      'Supabase URL & Anon Key saved locally and ready for client SDK.'
-    );
+    const r1 = safeSetItem('vonta_manual_supabase_url', supabaseUrlInput.trim());
+    const r2 = safeSetItem('vonta_manual_supabase_key', supabaseAnonKeyInput.trim());
+    if (r1.success && r2.success) {
+      setSavedConfigMsg(
+        'Supabase URL & Anon Key saved locally and ready for client SDK.'
+      );
+    } else {
+      setSavedConfigMsg(
+        'Storage quota exceeded: credentials could not be saved to local storage.'
+      );
+    }
     setTimeout(() => setSavedConfigMsg(null), 3500);
   };
 

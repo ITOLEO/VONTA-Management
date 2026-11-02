@@ -65,7 +65,9 @@ import {
   Users,
   CalendarCheck,
   History,
+  AlertTriangle,
 } from 'lucide-react';
+import { safeSetItem, safeGetItem, safeRemoveItem } from './utils/storage';
 
 const STORAGE_KEY = 'vonta_supabase_db_v8';
 
@@ -87,7 +89,7 @@ export default function App() {
   // 1. Database State
   const [db, setDb] = useState<VontaDatabaseState>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = safeGetItem(STORAGE_KEY);
       if (saved) {
         return JSON.parse(saved) as VontaDatabaseState;
       }
@@ -97,11 +99,14 @@ export default function App() {
     return INITIAL_VONTA_DATABASE;
   });
 
+  const [storageQuotaWarning, setStorageQuotaWarning] = useState<boolean>(false);
+
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-    } catch {
-      // Ignore quota errors
+    const res = safeSetItem(STORAGE_KEY, JSON.stringify(db));
+    if (!res.success) {
+      setStorageQuotaWarning(true);
+    } else {
+      setStorageQuotaWarning(false);
     }
   }, [db]);
 
@@ -1992,10 +1997,39 @@ export default function App() {
     [projectActivities, activeBlueprintId, departmentFilter]
   );
 
+  // Reusable sticky storage quota warning banner (visible until next successful write)
+  const storageQuotaBanner = storageQuotaWarning ? (
+    <div
+      role="alert"
+      className="fixed top-0 left-0 right-0 z-50 bg-[#DC2626] text-white px-4 py-2.5 text-xs sm:text-sm font-semibold flex items-center justify-between shadow-lg"
+    >
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 shrink-0 text-white" />
+        <span>
+          Storage quota exceeded: Recent changes are NOT saved and will be lost on refresh. Please free up browser storage.
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          const res = safeSetItem(STORAGE_KEY, JSON.stringify(db));
+          if (res.success) {
+            setStorageQuotaWarning(false);
+            showToast('Changes saved to local storage.');
+          }
+        }}
+        className="underline text-xs shrink-0 cursor-pointer hover:opacity-90 ml-3 bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded"
+      >
+        Retry Save
+      </button>
+    </div>
+  ) : null;
+
   // TAMPILAN KHUSUS STEP 1: WEB HOME LANDING TANPA NAVBAR PROYEK (MIRIP FOTO 2)
   if (activeWorkspaceTab === 'web_home') {
     return (
       <>
+        {storageQuotaBanner}
         <VontaWebHomeLandingView
           activeProfile={activeProfile}
           profiles={db.profiles}
@@ -2016,6 +2050,7 @@ export default function App() {
   if (activeWorkspaceTab === 'dashboard_projects') {
     return (
       <>
+        {storageQuotaBanner}
         <StandaloneProjectsDashboardView
           projects={db.projects}
           activeProjectId={activeProject.id}
@@ -2074,6 +2109,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8F7F4] dark:bg-[#0F141C] text-[#141619] dark:text-[#F8FAFC] transition-colors">
+      {storageQuotaBanner}
       {/* 1. GLOBAL TOP BREADCRUMB BAR (FIXED AT TOP, HEIGHT 48PX, CLEAN LIKE SUPABASE) */}
       <header className="no-print fixed top-0 left-0 right-0 z-40 h-12 bg-white dark:bg-[#161F2C] border-b border-[#E2E6EC] dark:border-[#263346] px-4 sm:px-5 flex items-center justify-between gap-3">
         {/* Left Side: Breadcrumb [Logo Vonta] / [Uluwatu Resort Group] / [Active Project] / [Blueprint Area Dropdown] */}
@@ -2821,7 +2857,7 @@ export default function App() {
               onBackToProject={() => handleNavigateTab(lastNonSettingsTab)}
               dbState={db}
               onResetDatabase={() => {
-                localStorage.removeItem(STORAGE_KEY);
+                safeRemoveItem(STORAGE_KEY);
                 setDb(INITIAL_VONTA_DATABASE);
                 setActiveProfileId('prof-owner-01');
                 setActiveProjectId('proj-uluwatu-01');
